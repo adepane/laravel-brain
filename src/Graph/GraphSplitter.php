@@ -12,14 +12,14 @@ use LaraMint\LaravelBrain\Analysis\ScheduleEntry;
 class TabManifestEntry
 {
     public function __construct(
-        public readonly string $id,
-        public readonly string $label,
-        public readonly int $routeCount,
-        public readonly int $nodeCount,
-        public readonly int $edgeCount,
-        public readonly string $file,
-        public readonly string $routeFile = '',
-        public readonly string $category = 'Route',
+        public string $id,
+        public string $label,
+        public int $routeCount,
+        public int $nodeCount,
+        public int $edgeCount,
+        public string $file,
+        public string $routeFile = '',
+        public string $category = 'Route',
     ) {}
 }
 

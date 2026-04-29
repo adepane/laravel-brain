@@ -7,11 +7,11 @@ namespace LaraMint\LaravelBrain\Graph;
 class Edge implements \JsonSerializable
 {
     public function __construct(
-        public readonly string $id,
-        public readonly string $source,
-        public readonly string $target,
-        public readonly string $label,
-        public readonly string $type,
+        public string $id,
+        public string $source,
+        public string $target,
+        public string $label,
+        public string $type,
     ) {}
 
     public function jsonSerialize(): array

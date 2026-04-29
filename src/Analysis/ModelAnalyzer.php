@@ -12,10 +12,10 @@ use PhpParser\NodeVisitorAbstract;
 class ModelDefinition
 {
     public function __construct(
-        public readonly string $fqcn,
-        public readonly string $file,
-        public readonly array $relationships, // ['type' => 'hasMany', 'related' => FQCN][]
-        public readonly array $firedEvents,   // FQCN[]
+        public string $fqcn,
+        public string $file,
+        public array $relationships, // ['type' => 'hasMany', 'related' => FQCN][]
+        public array $firedEvents,   // FQCN[]
     ) {}
 }
 

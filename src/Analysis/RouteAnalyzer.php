@@ -12,17 +12,17 @@ use PhpParser\NodeVisitorAbstract;
 class RouteDefinition
 {
     public function __construct(
-        public readonly string $method,
-        public readonly string $uri,
-        public readonly string $controller,
-        public readonly string $action,
-        public readonly array $middlewares,
-        public readonly string $name,
-        public readonly string $file,
-        public readonly int $line,
-        public readonly string $tabGroup = 'default',
+        public string $method,
+        public string $uri,
+        public string $controller,
+        public string $action,
+        public array $middlewares,
+        public string $name,
+        public string $file,
+        public int $line,
+        public string $tabGroup = 'default',
         /** @var Node\Expr\Closure|Node\Expr\ArrowFunction|null Inline closure AST for closure routes */
-        public readonly ?Node $closureNode = null,
+        public ?Node $closureNode = null,
     ) {}
 }
 

@@ -15,11 +15,11 @@ namespace LaraMint\LaravelBrain\Analysis;
 class CallChainEdge
 {
     public function __construct(
-        public readonly string $callerFqcn,
-        public readonly string $callerMethod,
-        public readonly string $calleeFqcn,
-        public readonly string $calleeMethod,
+        public string $callerFqcn,
+        public string $callerMethod,
+        public string $calleeFqcn,
+        public string $calleeMethod,
         /** 'service' | 'repository' | 'model' | 'job' | 'event' */
-        public readonly string $type,
+        public string $type,
     ) {}
 }

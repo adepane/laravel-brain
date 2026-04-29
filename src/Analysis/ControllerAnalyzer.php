@@ -12,22 +12,22 @@ use PhpParser\NodeVisitorAbstract;
 class MethodDefinition
 {
     public function __construct(
-        public readonly string $name,
-        public readonly array $dependencies, // varName => FQCN
-        public readonly ?Node\Stmt\ClassMethod $ast = null,
+        public string $name,
+        public array $dependencies, // varName => FQCN
+        public ?Node\Stmt\ClassMethod $ast = null,
     ) {}
 }
 
 class ControllerDefinition
 {
     public function __construct(
-        public readonly string $fqcn,
-        public readonly string $file,
-        public readonly array $constructorDeps, // varName => FQCN
+        public string $fqcn,
+        public string $file,
+        public array $constructorDeps, // varName => FQCN
         /** @var MethodDefinition[] */
-        public readonly array $methods,
+        public array $methods,
         /** @var array<string, string> */
-        public readonly array $useMap = [],
+        public array $useMap = [],
     ) {}
 }
 

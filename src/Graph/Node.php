@@ -7,10 +7,10 @@ namespace LaraMint\LaravelBrain\Graph;
 class Node implements \JsonSerializable
 {
     public function __construct(
-        public readonly string $id,
-        public readonly string $type,
-        public readonly string $label,
-        public readonly array $data = [],
+        public string $id,
+        public string $type,
+        public string $label,
+        public array $data = [],
     ) {}
 
     public function jsonSerialize(): array

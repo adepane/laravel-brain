@@ -13,10 +13,10 @@ use PhpParser\NodeVisitorAbstract;
 class DbQuery
 {
     public function __construct(
-        public readonly string $type,       // 'eloquent' | 'raw'
-        public readonly string $model,      // FQCN for eloquent, '' for raw
-        public readonly string $table,      // derived table name
-        public readonly string $operation,  // 'select' | 'insert' | 'update' | 'delete' | 'query'
+        public string $type,       // 'eloquent' | 'raw'
+        public string $model,      // FQCN for eloquent, '' for raw
+        public string $table,      // derived table name
+        public string $operation,  // 'select' | 'insert' | 'update' | 'delete' | 'query'
     ) {}
 
     public function toArray(): array

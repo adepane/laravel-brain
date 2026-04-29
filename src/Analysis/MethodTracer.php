@@ -15,12 +15,12 @@ use PhpParser\NodeVisitorAbstract;
 class MethodTrace
 {
     public function __construct(
-        public readonly string $controller,
-        public readonly string $method,
-        public readonly array $modelCalls,
-        public readonly array $serviceCalls,
-        public readonly array $eventDispatches,
-        public readonly array $jobDispatches,
+        public string $controller,
+        public string $method,
+        public array $modelCalls,
+        public array $serviceCalls,
+        public array $eventDispatches,
+        public array $jobDispatches,
     ) {}
 }
 

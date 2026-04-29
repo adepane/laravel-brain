@@ -12,9 +12,9 @@ use PhpParser\NodeVisitorAbstract;
 class ChannelDefinition
 {
     public function __construct(
-        public readonly string $name,        // e.g. "App.Models.User.{id}"
-        public readonly string $class,       // FQCN if class-based, '' if closure
-        public readonly string $file,
+        public string $name,        // e.g. "App.Models.User.{id}"
+        public string $class,       // FQCN if class-based, '' if closure
+        public string $file,
     ) {}
 }
 
@@ -73,8 +73,8 @@ class ChannelAnalyzer
             public array $channels = [];
 
             public function __construct(
-                private readonly string $file,
-                private readonly array $useMap,
+                private string $file,
+                private array $useMap,
             ) {}
 
             public function enterNode(Node $node): null

@@ -7,9 +7,9 @@ namespace LaraMint\LaravelBrain\Analysis;
 class MiddlewareRegistry
 {
     public function __construct(
-        public readonly array $global,
-        public readonly array $groups,
-        public readonly array $aliases,
+        public array $global,
+        public array $groups,
+        public array $aliases,
     ) {}
 
     public function resolveAlias(string $alias): string

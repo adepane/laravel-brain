@@ -12,17 +12,17 @@ use LaraMint\LaravelBrain\Graph\TabManifestEntry;
 class AnalysisResult
 {
     public function __construct(
-        public readonly Graph $fullGraph,
+        public Graph $fullGraph,
         /** @var array<string, Graph> tabId => subgraph */
-        public readonly array $subgraphs,
+        public array $subgraphs,
         /** @var TabManifestEntry[] */
-        public readonly array $manifest,
-        public readonly string $manifestJson,
-        public readonly string $projectName,
-        public readonly string $analyzedAt,
-        public readonly int $totalRoutes,
-        public readonly int $totalCommands = 0,
-        public readonly int $totalChannels = 0,
+        public array $manifest,
+        public string $manifestJson,
+        public string $projectName,
+        public string $analyzedAt,
+        public int $totalRoutes,
+        public int $totalCommands = 0,
+        public int $totalChannels = 0,
     ) {}
 }
 

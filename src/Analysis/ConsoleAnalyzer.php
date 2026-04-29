@@ -12,21 +12,21 @@ use PhpParser\NodeVisitorAbstract;
 class ConsoleCommandDefinition
 {
     public function __construct(
-        public readonly string $signature,
-        public readonly string $description,
-        public readonly string $class,       // FQCN for class-based, '' for closures
-        public readonly string $file,
-        public readonly string $source,      // 'route' | 'class' | 'kernel'
+        public string $signature,
+        public string $description,
+        public string $class,       // FQCN for class-based, '' for closures
+        public string $file,
+        public string $source,      // 'route' | 'class' | 'kernel'
     ) {}
 }
 
 class ScheduleEntry
 {
     public function __construct(
-        public readonly string $type,        // 'command' | 'job' | 'call'
-        public readonly string $target,      // command signature or job FQCN
-        public readonly string $frequency,   // 'daily' | 'hourly' | etc.
-        public readonly string $file,
+        public string $type,        // 'command' | 'job' | 'call'
+        public string $target,      // command signature or job FQCN
+        public string $frequency,   // 'daily' | 'hourly' | etc.
+        public string $file,
     ) {}
 }
 
@@ -121,7 +121,7 @@ class ConsoleAnalyzer
 
             public array $schedule = [];
 
-            public function __construct(private readonly string $file) {}
+            public function __construct(private string $file) {}
 
             public function enterNode(Node $node): ?int
             {
@@ -233,7 +233,7 @@ class ConsoleAnalyzer
 
             private ?string $description = null;
 
-            public function __construct(private readonly string $file) {}
+            public function __construct(private string $file) {}
 
             public function enterNode(Node $node): null
             {
@@ -305,8 +305,8 @@ class ConsoleAnalyzer
             public array $schedule = [];
 
             public function __construct(
-                private readonly string $file,
-                private readonly array $useMap,
+                private string $file,
+                private array $useMap,
             ) {}
 
             public function enterNode(Node $node): null
