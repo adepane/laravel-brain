@@ -1,7 +1,6 @@
 {
     "name": "laramint/laravel-brain",
     "description": "Visualize your Laravel request lifecycle as an interactive graph",
-    "version": "1.0.0",
     "type": "library",
     "license": "MIT",
     "require": {
