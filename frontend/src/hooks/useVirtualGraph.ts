@@ -9,26 +9,33 @@ import type { ElementDefinition } from 'cytoscape'
 export function useVirtualGraph(elements: ElementDefinition[], threshold = 300) {
   const [limit, setLimit] = useState(threshold)
 
-  // Reset limit when elements change (e.g. tab switch)
-  useEffect(() => {
+  // Adjust state during render if elements change (avoids Effect cascading render)
+  const [prevElements, setPrevElements] = useState(elements)
+  if (elements !== prevElements) {
+    setPrevElements(elements)
     setLimit(threshold)
-  }, [elements, threshold])
+  }
 
   // Progressively increase limit using requestIdleCallback if available, or setTimeout
   useEffect(() => {
     if (limit >= elements.length) return
 
-    const nextFrame = (window as any).requestIdleCallback 
-      ? (window as any).requestIdleCallback 
-      : (cb: any) => setTimeout(cb, 100)
+    const win = window as unknown as { 
+      requestIdleCallback?: (cb: IdleRequestCallback) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    }
+
+    const nextFrame = win.requestIdleCallback 
+      ? win.requestIdleCallback.bind(win)
+      : (cb: IdleRequestCallback) => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 100)
 
     const handle = nextFrame(() => {
       setLimit(prev => Math.min(prev + 200, elements.length))
     })
 
     return () => {
-      if ((window as any).cancelIdleCallback) (window as any).cancelIdleCallback(handle)
-      else clearTimeout(handle)
+      if (win.cancelIdleCallback) win.cancelIdleCallback(handle as number)
+      else clearTimeout(handle as number)
     }
   }, [limit, elements.length])
 

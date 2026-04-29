@@ -4,7 +4,8 @@ import { useManifest } from './hooks/useManifest'
 import { useTabGraph } from './hooks/useTabGraph'
 import { useVirtualGraph } from './hooks/useVirtualGraph'
 import { useTheme } from './hooks/useTheme'
-import { GraphView, LARGE_GRAPH_THRESHOLD } from './components/GraphView'
+import { GraphView } from './components/GraphView'
+import { LARGE_GRAPH_THRESHOLD } from './utils/graphConstants'
 import { Sidebar } from './components/Sidebar'
 import { Toolbar } from './components/Toolbar'
 import { LeftSidebar } from './components/LeftSidebar'
@@ -32,20 +33,51 @@ export default function App() {
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES))
   const cyRef = useRef<Core | null>(null)
 
-  // Auto-select tab from URL or fallback to first non-All tab
-  useEffect(() => {
-    if (!manifest) return
+  const handleSelectTab = useCallback((tab: TabEntry) => {
+    if (activeTab?.id === tab.id) return
     
-    const params = new URLSearchParams(window.location.search)
-    const urlTabId = params.get('tab')
-    
-    let targetTab = manifest.tabs.find((t) => t.id === urlTabId)
-    if (!targetTab && !urlTabId) {
-      targetTab = manifest.tabs.find((t) => t.id !== 'all') ?? manifest.tabs[0]
+    // Update URL if different
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('tab') !== tab.id) {
+      url.searchParams.set('tab', tab.id)
+      window.history.pushState({ tabId: tab.id }, '', url.toString())
     }
-    
-    if (targetTab) handleSelectTab(targetTab)
-  }, [manifest])
+
+    setActiveTab(tab)
+    setSearchQuery('')
+    load(tab.file)
+  }, [activeTab, load])
+
+  // Auto-select tab from URL or fallback to first non-All tab (during render)
+  const [prevManifest, setPrevManifest] = useState(manifest)
+  if (manifest !== prevManifest) {
+    setPrevManifest(manifest)
+    if (manifest && !activeTab) {
+      const params = new URLSearchParams(window.location.search)
+      const urlTabId = params.get('tab')
+      let targetTab = manifest.tabs.find((t) => t.id === urlTabId)
+      if (!targetTab && !urlTabId) {
+        targetTab = manifest.tabs.find((t) => t.id !== 'all') ?? manifest.tabs[0]
+      }
+      if (targetTab) handleSelectTab(targetTab)
+    }
+  }
+
+  // Adjust state during render when tab data changes (avoids Effect cascading render)
+  const [prevTabData, setPrevTabData] = useState(tabState.data)
+  if (tabState.data !== prevTabData) {
+    setPrevTabData(tabState.data)
+    if (tabState.data) {
+      const nodeCount = tabState.data.nodes.length
+      const nextVisible = new Set(
+        nodeCount > LARGE_GRAPH_THRESHOLD
+          ? ALL_TYPES.filter((t) => t !== 'middleware')
+          : ALL_TYPES
+      )
+      setVisibleTypes(nextVisible)
+    }
+    setSelectedId(null)
+  }
 
   // Sync state with URL on back/forward
   useEffect(() => {
@@ -63,41 +95,19 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState)
   }, [manifest, load])
 
-  // When tab data arrives, auto-hide middleware if large; reset dynamic state
-  useEffect(() => {
-    if (!tabState.data) return
-    const nodeCount = tabState.data.nodes.length
-    setVisibleTypes(new Set(
-      nodeCount > LARGE_GRAPH_THRESHOLD
-        ? ALL_TYPES.filter((t) => t !== 'middleware')
-        : ALL_TYPES
-    ))
-    setSelectedId(null)
-  }, [tabState.data])
-
   // Node click: select
   const handleNodeSelect = useCallback((id: string | null) => {
     setSelectedId(id)
   }, [])
 
-  const handleSelectTab = useCallback((tab: TabEntry) => {
-    if (activeTab?.id === tab.id) return
-    
-    // Update URL if different
-    const url = new URL(window.location.href)
-    if (url.searchParams.get('tab') !== tab.id) {
-      url.searchParams.set('tab', tab.id)
-      window.history.pushState({ tabId: tab.id }, '', url.toString())
+  // Adjust loading state during render
+  const [prevTabLoading, setPrevTabLoading] = useState(tabState.loading)
+  if (tabState.loading !== prevTabLoading) {
+    setPrevTabLoading(tabState.loading)
+    if (!tabState.loading) {
+      setLoadingTabId(null)
     }
-
-    setActiveTab(tab)
-    setSearchQuery('')
-    load(tab.file)
-  }, [activeTab, load])
-
-  useEffect(() => {
-    if (!tabState.loading) setLoadingTabId(null)
-  }, [tabState.loading])
+  }
 
   const groupedTabs = useMemo(() => {
     if (!manifest) return { allTab: null, fileGroups: [] }
@@ -174,7 +184,11 @@ export default function App() {
   const toggleType = useCallback((type: string) => {
     setVisibleTypes((prev) => {
       const next = new Set(prev)
-      next.has(type) ? next.delete(type) : next.add(type)
+      if (next.has(type)) {
+        next.delete(type)
+      } else {
+        next.add(type)
+      }
       return next
     })
   }, [])
@@ -194,7 +208,7 @@ export default function App() {
       } else {
         alert('Scan failed.')
       }
-    } catch (e) {
+    } catch {
       alert('Scan failed.')
     } finally {
       setScanning(false)

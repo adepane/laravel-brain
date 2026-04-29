@@ -5,15 +5,23 @@ export function useFileSource(filePath: string | null) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  // Adjust state during render when filePath changes
+  const [prevFilePath, setPrevFilePath] = useState(filePath)
+  if (filePath !== prevFilePath) {
+    setPrevFilePath(filePath)
     if (!filePath) {
       setContent(null)
       setError(null)
-      return
+    } else {
+      setLoading(true)
+      setError(null)
+      setContent(null)
     }
-    setLoading(true)
-    setError(null)
-    setContent(null)
+  }
+
+  useEffect(() => {
+    if (!filePath) return
+
     fetch(`${import.meta.env.BASE_URL}api/source?path=${encodeURIComponent(filePath)}`)
       .then((r) => r.json())
       .then((data) => {

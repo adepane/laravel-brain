@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import type { Core } from 'cytoscape'
-import { LARGE_GRAPH_THRESHOLD } from './GraphView'
+import { LARGE_GRAPH_THRESHOLD } from '../utils/graphConstants'
 import { ExportModal } from './ExportModal'
 import { graphToMermaid, downloadPng } from '../utils/exportUtils'
 import type { GraphData } from '../types/graph'
@@ -77,12 +77,29 @@ export function Toolbar({ layout, nodeCount, edgeCount, visibleCount, activeTabL
       } else {
         alert('Scan failed.')
       }
-    } catch (e) {
+    } catch {
       alert('Scan failed.')
     } finally {
       setScanning(false)
     }
   }
+
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const ageData = useMemo(() => {
+    if (!analyzedAt) return null
+    const ageMs = now - new Date(analyzedAt).getTime()
+    return {
+      ageMs,
+      isStale: ageMs > 24 * 3600 * 1000,
+      label: `Scanned ${formatAge(ageMs)} ago`
+    }
+  }, [analyzedAt, now])
 
   const isLarge = nodeCount > LARGE_GRAPH_THRESHOLD
 
@@ -121,30 +138,24 @@ export function Toolbar({ layout, nodeCount, edgeCount, visibleCount, activeTabL
               ⚠ large graph
             </span>
           )}
-          {analyzedAt && (() => {
-            const ageMs = Date.now() - new Date(analyzedAt).getTime()
-            const isStale = ageMs > 24 * 3600 * 1000
-            const label = `Scanned ${formatAge(ageMs)} ago`
-            if (isStale) {
-              return (
-                <button
-                  className="stat-chip stat-chip--stale"
-                  onClick={handleScan}
-                  title={`Graph is over 24h old (last scanned ${new Date(analyzedAt).toLocaleString()}). Click to re-scan.`}
-                >
-                  ⚠ {label} — Re-scan?
-                </button>
-              )
-            }
-            return (
+          {ageData && (
+            ageData.isStale ? (
+              <button
+                className="stat-chip stat-chip--stale"
+                onClick={handleScan}
+                title={`Graph is over 24h old (last scanned ${analyzedAt ? new Date(analyzedAt).toLocaleString() : ''}). Click to re-scan.`}
+              >
+                ⚠ {ageData.label} — Re-scan?
+              </button>
+            ) : (
               <span
                 className="stat-chip stat-chip--age"
-                title={`Last scanned: ${new Date(analyzedAt).toLocaleString()}`}
+                title={`Last scanned: ${analyzedAt ? new Date(analyzedAt).toLocaleString() : ''}`}
               >
-                {label}
+                {ageData.label}
               </span>
             )
-          })()}
+          )}
         </div>
 
         <div className="toolbar-controls">

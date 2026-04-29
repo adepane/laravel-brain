@@ -1,40 +1,16 @@
 import { useEffect, useRef, useMemo } from 'react'
 import CytoscapeComponent from 'react-cytoscapejs'
-import type { Core, ElementDefinition } from 'cytoscape'
+import type { Core, ElementDefinition, NodeSingular, Css } from 'cytoscape'
 import cytoscape from 'cytoscape'
-// @ts-ignore
+// @ts-expect-error: Missing type definitions for cytoscape-dagre
 import dagre from 'cytoscape-dagre'
-// @ts-ignore
+// @ts-expect-error: Missing type definitions for cytoscape-cose-bilkent
 import coseBilkent from 'cytoscape-cose-bilkent'
 
 cytoscape.use(dagre)
 cytoscape.use(coseBilkent)
 
-export const LARGE_GRAPH_THRESHOLD = 80
-
-const ACCENT_COLORS: Record<string, string> = {
-  route: '#4CAF50',
-  middleware: '#FF9800',
-  controller: '#2196F3',
-  action: '#03A9F4',
-  service: '#9C27B0',
-  model: '#F44336',
-  event: '#FFD600',
-  job: '#607D8B',
-}
-
-const BG_COLORS: Record<string, string> = {
-  route: '#0C1A0C',
-  middleware: '#1C1408',
-  controller: '#08141C',
-  action: '#07151D',
-  service: '#150C1C',
-  model: '#1C0C0C',
-  event: '#1C1A08',
-  job: '#0D1113',
-}
-
-const HIGHLIGHT_COLOR = '#8B6FE8'
+import { LARGE_GRAPH_THRESHOLD, ACCENT_COLORS, BG_COLORS, HIGHLIGHT_COLOR } from '../utils/graphConstants'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildStylesheet(dark: boolean): any[] {
@@ -46,7 +22,7 @@ function buildStylesheet(dark: boolean): any[] {
     {
       selector: 'node',
       style: {
-        label: (ele: cytoscape.NodeSingular) => {
+        label: (ele: NodeSingular) => {
           let prefix = ''
           if (ele.data('hasN1'))     prefix += '⚠️ '
           if (ele.data('fatMethod')) prefix += '🧱 '
@@ -68,8 +44,8 @@ function buildStylesheet(dark: boolean): any[] {
         'background-color': '#181c27',
         'border-width': 1.5,
         'border-color': 'rgba(255,255,255,0.1)',
-        'corner-radius': 6,
-      },
+        'corner-radius': '6px',
+      } as Css.Node,
     },
     {
       selector: 'node[hasN1 = 1]',
@@ -79,7 +55,7 @@ function buildStylesheet(dark: boolean): any[] {
         'shadow-blur': 12,
         'shadow-color': '#F44336',
         'shadow-opacity': 0.5,
-      } as any,
+      } as Css.Node,
     },
     ...Object.entries(ACCENT_COLORS).map(([type, color]) => ({
       selector: `node[type = "${type}"]`,
@@ -87,7 +63,7 @@ function buildStylesheet(dark: boolean): any[] {
         'border-color': color,
         'background-color': BG_COLORS[type] || '#181c27',
         color: color,
-      } as cytoscape.Css.Node,
+      } as Css.Node,
     })),
     { selector: 'node.dimmed', style: { opacity: 0.1, filter: 'grayscale(100%)' } },
     { selector: 'node.hidden', style: { display: 'none' } },
@@ -95,18 +71,18 @@ function buildStylesheet(dark: boolean): any[] {
       selector: 'node:selected',
       style: {
         'border-width': 2.5,
-        'border-color': (ele: any) => ACCENT_COLORS[ele.data('type')] || '#fff',
+        'border-color': (ele: NodeSingular) => ACCENT_COLORS[ele.data('type')] || '#fff',
         'shadow-blur': 15,
-        'shadow-color': (ele: any) => ACCENT_COLORS[ele.data('type')] || '#fff',
+        'shadow-color': (ele: NodeSingular) => ACCENT_COLORS[ele.data('type')] || '#fff',
         'shadow-opacity': 0.8,
-        'background-color': (ele: any) => {
+        'background-color': (ele: NodeSingular) => {
           const type = ele.data('type')
           return BG_COLORS[type] ? BG_COLORS[type] : '#181c27'
         },
         'overlay-color': '#fff',
         'overlay-padding': 4,
         'overlay-opacity': 0.05,
-      } as any,
+      } as Css.Node,
     },
     {
       selector: 'edge',
@@ -124,7 +100,7 @@ function buildStylesheet(dark: boolean): any[] {
         'text-rotation': 'autorotate',
         'text-margin-y': -8,
         'text-opacity': 0, // Hidden by default
-      },
+      } as Css.Edge,
     },
     {
       selector: 'edge.highlighted',
@@ -135,7 +111,7 @@ function buildStylesheet(dark: boolean): any[] {
         'text-opacity': 1,
         color: HIGHLIGHT_COLOR,
         'z-index': 999,
-      },
+      } as Css.Edge,
     },
     { selector: 'edge.dimmed', style: { opacity: 0.02 } },
     { selector: 'edge.hidden', style: { display: 'none' } },
@@ -143,12 +119,11 @@ function buildStylesheet(dark: boolean): any[] {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function pickLayout(name: string, nodeCount: number): any {
+function pickLayout(name: string, nodeCount: number): any {
   const large = nodeCount > LARGE_GRAPH_THRESHOLD
 
   if (name === 'dagre') {
     if (large) {
-      // dagre chokes on large graphs — fall back to breadthfirst
       return { name: 'breadthfirst', directed: true, spacingFactor: 1.4, padding: 40, animate: false }
     }
     return { name: 'dagre', rankDir: 'LR', nodeSep: 40, rankSep: 80, padding: 40, animate: false }
@@ -203,7 +178,7 @@ export function GraphView({ elements, layout, searchQuery, visibleTypes, theme, 
     }, 150)
 
     return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current) }
-  }, [searchQuery])
+  }, [searchQuery, cyRef])
 
   // Type visibility & Layout re-run (optimized)
   useEffect(() => {
@@ -215,14 +190,22 @@ export function GraphView({ elements, layout, searchQuery, visibleTypes, theme, 
     // 1. Hide/Show nodes based on type
     cy.nodes().forEach((n) => {
       const type = n.data('type') as string
-      visibleTypes.has(type) ? n.removeClass('hidden') : n.addClass('hidden')
+      if (visibleTypes.has(type)) {
+        n.removeClass('hidden')
+      } else {
+        n.addClass('hidden')
+      }
     })
 
     // 2. Hide edges if either source or target is hidden
     cy.edges().forEach((e) => {
       const srcVisible = visibleTypes.has(e.source().data('type'))
       const tgtVisible = visibleTypes.has(e.target().data('type'))
-      srcVisible && tgtVisible ? e.removeClass('hidden') : e.addClass('hidden')
+      if (srcVisible && tgtVisible) {
+        e.removeClass('hidden')
+      } else {
+        e.addClass('hidden')
+      }
     })
 
     cy.endBatch()
@@ -237,7 +220,7 @@ export function GraphView({ elements, layout, searchQuery, visibleTypes, theme, 
     }, 200)
 
     return () => { if (layoutTimeout.current) clearTimeout(layoutTimeout.current) }
-  }, [visibleTypes, layout])
+  }, [visibleTypes, layout, cyRef])
 
 
   return (

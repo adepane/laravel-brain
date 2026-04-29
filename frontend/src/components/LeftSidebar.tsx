@@ -78,14 +78,22 @@ export function LeftSidebar({
   const toggleFile = (fileName: string) =>
     setCollapsedFiles((s) => {
       const n = new Set(s)
-      n.has(fileName) ? n.delete(fileName) : n.add(fileName)
+      if (n.has(fileName)) {
+        n.delete(fileName)
+      } else {
+        n.add(fileName)
+      }
       return n
     })
 
   const togglePrefix = (key: string) =>
     setCollapsedPrefixes((s) => {
       const n = new Set(s)
-      n.has(key) ? n.delete(key) : n.add(key)
+      if (n.has(key)) {
+        n.delete(key)
+      } else {
+        n.add(key)
+      }
       return n
     })
 

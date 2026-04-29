@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef, useCallback, useState } from 'react'
+import { useMemo, useRef, useCallback, useState } from 'react'
 import type { GraphData, GraphNode, GraphEdge, FlowStep, DbQuery } from '../types/graph'
 import { FlowchartView } from './FlowchartView'
 import { FlowchartModal } from './FlowchartModal'
@@ -66,11 +66,14 @@ export function Sidebar({ selectedId, graphData, theme, onClose }: Props) {
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false)
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
 
-  useEffect(() => { 
-    setSourceOpen(false) 
+  // Adjust state during render when selection changes (avoids Effect cascading render)
+  const [prevSelectedId, setPrevSelectedId] = useState(selectedId)
+  if (selectedId !== prevSelectedId) {
+    setPrevSelectedId(selectedId)
+    setSourceOpen(false)
     setIsFlowModalOpen(false)
     setIsSourceModalOpen(false)
-  }, [selectedId])
+  }
 
   const nodeMap = useMemo(() => {
     const map = new Map<string, GraphNode>()
