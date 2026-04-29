@@ -289,6 +289,14 @@ class GraphSplitter
     private function sanitizeId(string $group): string
     {
         // "POST /api/orders" → "post-api-orders"
-        return strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', $group), '-'));
+        $id = strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', $group), '-'));
+
+        // Avoid "File name too long" errors (max filename usually 255 chars).
+        // We limit the ID to 100 chars, then append a hash for uniqueness if it was long.
+        if (strlen($id) > 100) {
+            return substr($id, 0, 100).'-'.substr(md5($group), 0, 8);
+        }
+
+        return $id;
     }
 }
