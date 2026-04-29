@@ -16,6 +16,7 @@ class LaravelBrainServiceProvider extends ServiceProvider
             return;
         }
 
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'laravel-brain');
         $this->commands([ScanCommand::class]);
         $this->loadRoutesFrom(__DIR__.'/../routes/brain.php');
     }

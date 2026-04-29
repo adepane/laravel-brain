@@ -6,7 +6,7 @@ export default defineConfig({
   base: '/_laravel-brain/',
   root: '.',
   build: {
-    outDir: '../public',
+    outDir: '../resources/assets',
     emptyOutDir: false, // preserve router.php and graph.json
     rollupOptions: {
       output: {

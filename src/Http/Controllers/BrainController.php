@@ -72,18 +72,16 @@ class BrainController extends Controller
             return response(file_get_contents($path), 200, ['Content-Type' => 'application/json']);
         }
 
-        // Static files from the package public/ dir (assets, favicon, icons, etc.)
+        // Static files from the package resources/assets dir (assets, favicon, icons, etc.)
         if ($any !== '') {
-            $filePath = $this->packagePublicPath($any);
+            $filePath = $this->packageAssetPath($any);
             if ($filePath && file_exists($filePath) && is_file($filePath)) {
                 return $this->serveFile($filePath);
             }
         }
 
-        // SPA fallback — serve index.html
-        $index = $this->packagePublicPath('index.html');
-
-        return response(file_get_contents($index), 200, ['Content-Type' => 'text/html']);
+        // SPA fallback — serve index.blade.php view
+        return response()->view('laravel-brain::index');
     }
 
     private function serveFile(string $filePath): Response
@@ -105,15 +103,28 @@ class BrainController extends Controller
         return response(file_get_contents($filePath), 200, ['Content-Type' => $mime]);
     }
 
-    private function packagePublicPath(string $file = ''): string
+    private function packageAssetPath(string $file = ''): string
     {
-        $base = realpath(__DIR__.'/../../../public');
+        $base = realpath(__DIR__.'/../../../resources/assets');
         if (! $base) {
             return '';
         }
-        $full = $base.($file !== '' ? '/'.ltrim($file, '/') : '');
 
-        // Prevent path traversal outside the package public dir
-        return str_starts_with(realpath($full) ?: '', $base) ? $full : '';
+        $full = $base.($file !== '' ? '/'.ltrim($file, '/') : '');
+        $realFull = realpath($full);
+
+        if (! $realFull) {
+            return '';
+        }
+
+        // Add trailing slash to base to ensure we are matching a directory prefix correctly
+        $baseWithSlash = rtrim($base, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
+
+        // Check if the resolved path is either the base directory itself or inside it
+        if ($realFull === $base || str_starts_with($realFull, $baseWithSlash)) {
+            return $realFull;
+        }
+
+        return '';
     }
 }
