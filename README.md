@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="art/banner.svg" alt="Laravel Brain" />
+  <img src="art/banner.png" alt="Laravel Brain" />
 </p>
 
 <p align="center">
