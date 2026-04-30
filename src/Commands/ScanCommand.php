@@ -177,8 +177,8 @@ class ScanCommand extends Command
 
         match ($event) {
             'step:start' => $this->renderStepStart($data),
-            'step:done'  => $this->renderStepDone($data),
-            default      => null,
+            'step:done' => $this->renderStepDone($data),
+            default => null,
         };
     }
 

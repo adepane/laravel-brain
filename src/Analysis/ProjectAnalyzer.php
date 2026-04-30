@@ -48,7 +48,7 @@ class ProjectAnalyzer
 
     private GraphSplitter $graphSplitter;
 
-    /** @var callable(string $event, array $data): void */
+    /** @var callable(string, array): void */
     private $onProgress;
 
     public function __construct()
