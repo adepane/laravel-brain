@@ -13,7 +13,6 @@ interface FileGroup {
 }
 
 interface Props {
-  allTab: TabEntry | null
   fileGroups: FileGroup[]
   activeId: string | null
   loadingId: string | null
@@ -62,7 +61,7 @@ function RouteItem({ tab, isActive, isLoading, onSelect }: {
 }
 
 export function LeftSidebar({
-  allTab, fileGroups, activeId, loadingId, onSelect,
+  fileGroups, activeId, loadingId, onSelect,
   visibleTypes, counts, onToggle, onShowAll, onHideAll,
 }: Props) {
   const [topHeight, setTopHeight] = useState(320)
@@ -71,12 +70,12 @@ export function LeftSidebar({
   const dragStartY = useRef(0)
   const dragStartHeight = useRef(0)
 
-  // Track collapsed state for files and prefixes
-  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
-  const [collapsedPrefixes, setCollapsedPrefixes] = useState<Set<string>>(new Set())
+  // Track expanded state (collapsed by default)
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
+  const [expandedPrefixes, setExpandedPrefixes] = useState<Set<string>>(new Set())
 
   const toggleFile = (fileName: string) =>
-    setCollapsedFiles((s) => {
+    setExpandedFiles((s) => {
       const n = new Set(s)
       if (n.has(fileName)) {
         n.delete(fileName)
@@ -87,7 +86,7 @@ export function LeftSidebar({
     })
 
   const togglePrefix = (key: string) =>
-    setCollapsedPrefixes((s) => {
+    setExpandedPrefixes((s) => {
       const n = new Set(s)
       if (n.has(key)) {
         n.delete(key)
@@ -146,29 +145,10 @@ export function LeftSidebar({
             <button className="left-nav-search-clear" onClick={() => setSearch('')}>×</button>
           )}
         </div>
-
         <div className="left-nav">
-
-          {/* All-routes overview tab */}
-          {allTab && (
-            <div className="left-nav-overview">
-              <button
-                className={`left-nav-item left-nav-item--all ${activeId === allTab.id ? 'left-nav-item--active' : ''}`}
-                onClick={() => onSelect(allTab)}
-                title={`${allTab.nodeCount} nodes · ${allTab.edgeCount} edges`}
-              >
-                <span className="left-nav-all-icon">◈</span>
-                <span className="left-nav-uri">All Routes</span>
-                <span className="left-nav-badge">{allTab.routeCount}</span>
-              </button>
-            </div>
-          )}
-
-          {/* File groups → prefix groups → routes */}
           {filteredFileGroups.map((fg) => {
-            const fileOpen = !collapsedFiles.has(fg.fileName)
+            const fileOpen = expandedFiles.has(fg.fileName)
             const totalRoutes = fg.prefixGroups.reduce((s, pg) => s + pg.tabs.length, 0)
-
             return (
               <div key={fg.fileName} className="left-nav-file-group">
                 <button
@@ -177,7 +157,12 @@ export function LeftSidebar({
                   title={fg.fileName}
                 >
                   <span className="left-nav-file-chevron">{fileOpen ? '▾' : '▸'}</span>
-                  <span className="left-nav-file-icon">📄</span>
+                  <span className="left-nav-file-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  </span>
                   <span className="left-nav-file-name">{fg.fileName}</span>
                   <span className="left-nav-file-count">{totalRoutes}</span>
                 </button>
@@ -197,7 +182,7 @@ export function LeftSidebar({
                   }
 
                   const prefixKey = `${fg.fileName}::${pg.prefix}`
-                  const prefixOpen = !collapsedPrefixes.has(prefixKey)
+                  const prefixOpen = expandedPrefixes.has(prefixKey)
 
                   return (
                     <div key={pg.prefix} className="left-nav-prefix-group">
@@ -206,6 +191,11 @@ export function LeftSidebar({
                         onClick={() => togglePrefix(prefixKey)}
                       >
                         <span className="left-nav-prefix-chevron">{prefixOpen ? '▾' : '▸'}</span>
+                        <span className="left-nav-prefix-icon">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                          </svg>
+                        </span>
                         <span className="left-nav-prefix-name">/{pg.prefix}</span>
                         <span className="left-nav-prefix-count">{pg.tabs.length}</span>
                       </button>

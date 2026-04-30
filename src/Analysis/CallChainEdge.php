@@ -19,7 +19,9 @@ class CallChainEdge
         public string $callerMethod,
         public string $calleeFqcn,
         public string $calleeMethod,
-        /** 'service' | 'repository' | 'model' | 'job' | 'event' */
+        /** 'service' | 'repository' | 'model' | 'job' | 'event' | 'action' */
         public string $type,
+        /** 'public' | 'protected' | 'private' */
+        public string $visibility = 'public',
     ) {}
 }

@@ -16,7 +16,7 @@ import { LARGE_GRAPH_THRESHOLD, ACCENT_COLORS, BG_COLORS, HIGHLIGHT_COLOR } from
 function buildStylesheet(dark: boolean): any[] {
   const edgeLine = dark ? 'rgba(255,255,255, 0.07)' : 'rgba(0,0,0,0.1)'
   const edgeArrow = dark ? 'rgba(255,255,255, 0.12)' : 'rgba(0,0,0,0.15)'
-  const edgeLabel = dark ? 'rgba(255,255,255, 0.25)' : 'rgba(0,0,0,0.3)'
+  const edgeLabel = dark ? 'rgba(255,255,255, 0.4)' : 'rgba(0,0,0,0.5)'
 
   return [
     {
@@ -27,6 +27,11 @@ function buildStylesheet(dark: boolean): any[] {
           if (ele.data('hasN1'))     prefix += '⚠️ '
           if (ele.data('fatMethod')) prefix += '🧱 '
           if (ele.data('fatClass'))  prefix += '🏗️ '
+
+          const vis = ele.data('visibility')
+          if (vis === 'private') prefix += '🔒 '
+          if (vis === 'protected') prefix += '🛡️ '
+
           return prefix + ele.data('label')
         },
         'text-valign': 'center',
@@ -94,12 +99,16 @@ function buildStylesheet(dark: boolean): any[] {
         'arrow-scale': 0.8,
         'curve-style': 'bezier',
         label: 'data(label)',
-        'font-size': 8,
+        'font-size': 9,
         'font-family': 'ui-monospace, monospace',
         color: edgeLabel,
         'text-rotation': 'autorotate',
-        'text-margin-y': -8,
-        'text-opacity': 0, // Hidden by default
+        'text-margin-y': -10,
+        'text-opacity': 1, // Always visible
+        'text-background-color': dark ? '#111218' : '#fff',
+        'text-background-opacity': 1,
+        'text-background-padding': '3px',
+        'text-background-shape': 'roundrectangle',
       } as Css.Edge,
     },
     {
@@ -119,14 +128,14 @@ function buildStylesheet(dark: boolean): any[] {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function pickLayout(name: string, nodeCount: number): any {
+function pickLayout(name: string, nodeCount: number, rankDir: 'LR' | 'TB'): any {
   const large = nodeCount > LARGE_GRAPH_THRESHOLD
 
   if (name === 'dagre') {
     if (large) {
       return { name: 'breadthfirst', directed: true, spacingFactor: 1.4, padding: 40, animate: false }
     }
-    return { name: 'dagre', rankDir: 'LR', nodeSep: 40, rankSep: 80, padding: 40, animate: false }
+    return { name: 'dagre', rankDir, nodeSep: rankDir === 'TB' ? 60 : 40, rankSep: 80, padding: 40, animate: false }
   }
   if (name === 'cose-bilkent') {
     return { name: 'cose-bilkent', animate: false, randomize: false, padding: 40, nodeDimensionsIncludeLabels: true }
@@ -140,6 +149,7 @@ function pickLayout(name: string, nodeCount: number): any {
 interface Props {
   elements: ElementDefinition[]
   layout: string
+  rankDir: 'LR' | 'TB'
   searchQuery: string
   visibleTypes: Set<string>
   theme: 'dark' | 'light'
@@ -147,13 +157,13 @@ interface Props {
   cyRef: React.MutableRefObject<Core | null>
 }
 
-export function GraphView({ elements, layout, searchQuery, visibleTypes, theme, onNodeSelect, cyRef }: Props) {
+export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef }: Props) {
   const nodeCount = useMemo(() => elements.filter((e) => !e.data?.source).length, [elements])
   const stylesheet = useMemo(() => buildStylesheet(theme === 'dark'), [theme])
   const prevSearch = useRef(searchQuery)
   const layoutTimeout = useRef<number | null>(null)
   const searchTimeout = useRef<number | null>(null)
-  const layoutConfig = useMemo(() => pickLayout(layout, nodeCount), [layout, nodeCount])
+  const layoutConfig = useMemo(() => pickLayout(layout, nodeCount, rankDir), [layout, nodeCount, rankDir])
 
   // Search dimming (debounced)
   useEffect(() => {
@@ -179,6 +189,13 @@ export function GraphView({ elements, layout, searchQuery, visibleTypes, theme, 
 
     return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current) }
   }, [searchQuery, cyRef])
+
+  // Clear ref on unmount
+  useEffect(() => {
+    return () => {
+      cyRef.current = null
+    }
+  }, [cyRef])
 
   // Type visibility & Layout re-run (optimized)
   useEffect(() => {
@@ -215,12 +232,12 @@ export function GraphView({ elements, layout, searchQuery, visibleTypes, theme, 
     layoutTimeout.current = setTimeout(() => {
       const visibleNodes = cy.nodes(':visible')
       if (visibleNodes.length > 0) {
-        cy.layout(pickLayout(layout, visibleNodes.length)).run()
+        cy.layout(pickLayout(layout, visibleNodes.length, rankDir)).run()
       }
     }, 200)
 
     return () => { if (layoutTimeout.current) clearTimeout(layoutTimeout.current) }
-  }, [visibleTypes, layout, cyRef])
+  }, [visibleTypes, layout, rankDir, cyRef])
 
 
   return (

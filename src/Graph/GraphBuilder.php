@@ -236,7 +236,6 @@ class GraphBuilder
                     $controllerDef = $controllers[$route->controller] ?? null;
                     $this->addActionNode($route->controller, $route->action, $controllerDef, $actionId);
                     $this->addEdge($controllerId, $actionId, 'handles', 'controller-to-action');
-                    $this->addEdge($routeId, $actionId, 'handles', 'route-to-action');
                 }
             }
 
@@ -343,6 +342,7 @@ class GraphBuilder
                     'method' => $method,
                     'file' => $file,
                     'flowSteps' => $flowSteps,
+                    'visibility' => 'public',
                     ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
                 ]));
                 break;
@@ -356,6 +356,7 @@ class GraphBuilder
                     'method' => $method,
                     'file' => $file,
                     'flowSteps' => $flowSteps,
+                    'visibility' => 'public',
                     ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
                 ]));
                 break;
@@ -369,6 +370,7 @@ class GraphBuilder
                     'method' => $method,
                     'file' => $file,
                     'flowSteps' => $flowSteps,
+                    'visibility' => 'public',
                     ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
                 ]));
                 break;
@@ -384,6 +386,7 @@ class GraphBuilder
                     'subtype' => 'repository',
                     'file' => $file,
                     'flowSteps' => $flowSteps,
+                    'visibility' => $this->extractVisibility($fqcn, $method),
                     ...($repoMetrics ? ['metrics' => $repoMetrics] : []),
                     ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
                     ...($this->isFatMethod($repoMetrics) ? ['fatMethod' => true] : []),
@@ -401,6 +404,7 @@ class GraphBuilder
                     'subtype' => 'service',
                     'file' => $file,
                     'flowSteps' => $flowSteps,
+                    'visibility' => $this->extractVisibility($fqcn, $method),
                     ...($svcMetrics ? ['metrics' => $svcMetrics] : []),
                     ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
                     ...($this->isFatMethod($svcMetrics) ? ['fatMethod' => true] : []),
@@ -533,6 +537,7 @@ class GraphBuilder
             'method' => $action,
             'file' => $def !== null ? $def->file : $this->resolveFile($fqcn),
             'flowSteps' => $flowSteps,
+            'visibility' => $this->findActionVisibility($action, $def),
         ];
 
         if (! empty($metrics)) {
@@ -557,6 +562,66 @@ class GraphBuilder
         $this->graph->addNode(new Node($id, 'action', "{$short}@{$action}", $nodeData));
     }
 
+    private function findActionVisibility(string $action, ?ControllerDefinition $def): string
+    {
+        if ($def === null) {
+            return 'public';
+        }
+        foreach ($def->methods as $m) {
+            if ($m->name === $action) {
+                return $m->visibility;
+            }
+        }
+ 
+        return 'public';
+    }
+ 
+    private function extractVisibility(string $fqcn, string $method): string
+    {
+        $file = $this->resolveFile($fqcn);
+        if ($file === '' || ! file_exists($file)) {
+            return 'public';
+        }
+ 
+        if (! isset($this->parseCache[$file])) {
+            $this->parseCache[$file] = $this->parser->parse($file);
+        }
+        $parsed = $this->parseCache[$file];
+        if (! $parsed || ! $parsed['ast']) {
+            return 'public';
+        }
+ 
+        $traverser = new NodeTraverser;
+        $finder = new class($method) extends NodeVisitorAbstract
+        {
+            public string $visibility = 'public';
+ 
+            public function __construct(private string $target) {}
+ 
+            public function enterNode(PhpNode $node): ?int
+            {
+                if ($node instanceof PhpNode\Stmt\ClassMethod
+                    && $node->name->toString() === $this->target) {
+                    if ($node->isPrivate()) {
+                        $this->visibility = 'private';
+                    } elseif ($node->isProtected()) {
+                        $this->visibility = 'protected';
+                    } else {
+                        $this->visibility = 'public';
+                    }
+ 
+                    return NodeVisitor::STOP_TRAVERSAL;
+                }
+ 
+                return null;
+            }
+        };
+        $traverser->addVisitor($finder);
+        $traverser->traverse($parsed['ast']);
+ 
+        return $finder->visibility;
+    }
+ 
     private function hasN1InSteps(array $steps): bool
     {
         foreach ($steps as $step) {

@@ -112,6 +112,8 @@ class MethodTracer
                     $methodDef->ast,
                     $deps,
                     $controller->useMap,
+                    $controller->fqcn,
+                    $controller->parent,
                 );
 
                 foreach ($discovered as $hop) {
@@ -121,10 +123,11 @@ class MethodTracer
                         calleeFqcn: $hop['fqcn'],
                         calleeMethod: $hop['method'],
                         type: $hop['type'],
+                        visibility: $hop['visibility'],
                     );
 
                     // Recurse into non-leaf hops (services, repositories)
-                    if (in_array($hop['type'], ['service', 'repository'], true)) {
+                    if (in_array($hop['type'], ['service', 'repository', 'action'], true)) {
                         $subEdges = $this->traceDeep(
                             $hop['fqcn'],
                             $hop['method'],
@@ -176,6 +179,8 @@ class MethodTracer
             $methodAst,
             $classInfo['deps'],
             $classInfo['useMap'],
+            $fqcn,
+            $classInfo['parent'] ?? null,
         );
 
         $edges = [];
@@ -186,9 +191,10 @@ class MethodTracer
                 calleeFqcn: $hop['fqcn'],
                 calleeMethod: $hop['method'],
                 type: $hop['type'],
+                visibility: $hop['visibility'],
             );
 
-            if (in_array($hop['type'], ['service', 'repository'], true)) {
+            if (in_array($hop['type'], ['service', 'repository', 'action'], true)) {
                 $subEdges = $this->traceDeep($hop['fqcn'], $hop['method'], $depth + 1);
                 foreach ($subEdges as $sub) {
                     $edges[] = $sub;
@@ -207,17 +213,23 @@ class MethodTracer
         Node\Stmt\ClassMethod $ast,
         array $varTypeMap,
         array $useMap,
+        string $currentFqcn,
+        ?string $parentFqcn = null,
     ): array {
         $traverser = new NodeTraverser;
 
-        $visitor = new class($varTypeMap, $useMap) extends NodeVisitorAbstract
+        $visitor = new class($varTypeMap, $useMap, $currentFqcn, $parentFqcn) extends NodeVisitorAbstract
         {
-            /** @var list<array{fqcn:string,method:string,type:string}> */
+            /** @var list<array{fqcn:string,method:string,type:string,visibility:string}> */
             public array $hops = [];
 
             private array $varTypeMap;
 
             private array $useMap;
+
+            private string $currentFqcn;
+
+            private ?string $parentFqcn;
 
             private const MODEL_NAMESPACES = ['App\\Models\\', 'App\\Model\\', 'Models\\'];
 
@@ -225,10 +237,12 @@ class MethodTracer
 
             private const DISPATCH_FUNCTIONS = ['dispatch'];
 
-            public function __construct(array $varTypeMap, array $useMap)
+            public function __construct(array $varTypeMap, array $useMap, string $currentFqcn, ?string $parentFqcn = null)
             {
                 $this->varTypeMap = $varTypeMap;
                 $this->useMap = $useMap;
+                $this->currentFqcn = $currentFqcn;
+                $this->parentFqcn = $parentFqcn;
             }
 
             public function enterNode(Node $node): null
@@ -259,11 +273,21 @@ class MethodTracer
                     return;
                 }
 
-                $fqcn = $this->useMap[$class] ?? $class;
+                $lowerClass = strtolower($class);
+                if ($lowerClass === 'self' || $lowerClass === 'static') {
+                    $fqcn = $this->currentFqcn;
+                } elseif ($lowerClass === 'parent') {
+                    if ($this->parentFqcn === null) {
+                        return;
+                    }
+                    $fqcn = $this->parentFqcn;
+                } else {
+                    $fqcn = $this->useMap[$class] ?? $class;
+                }
 
                 // Job::dispatch()
                 if ($method === 'dispatch' && $this->looksLikeJob($fqcn)) {
-                    $this->hops[] = ['fqcn' => $fqcn, 'method' => 'handle', 'type' => 'job'];
+                    $this->hops[] = ['fqcn' => $fqcn, 'method' => 'handle', 'type' => 'job', 'visibility' => 'public'];
 
                     return;
                 }
@@ -272,7 +296,12 @@ class MethodTracer
                 if (in_array($class, ['Event', 'Illuminate\\Support\\Facades\\Event'], true) && $method === 'dispatch') {
                     $eventClass = $this->extractNewClass($node->args[0] ?? null);
                     if ($eventClass) {
-                        $this->hops[] = ['fqcn' => $this->useMap[$eventClass] ?? $eventClass, 'method' => '__construct', 'type' => 'event'];
+                        $this->hops[] = [
+                            'fqcn' => $this->useMap[$eventClass] ?? $eventClass,
+                            'method' => '__construct',
+                            'type' => 'event',
+                            'visibility' => 'public',
+                        ];
                     }
 
                     return;
@@ -280,7 +309,7 @@ class MethodTracer
 
                 // Eloquent static queries: User::find(), Order::create() …
                 if ($this->looksLikeModel($fqcn) && in_array($method, MethodTracer::MODEL_STATIC_METHODS, true)) {
-                    $this->hops[] = ['fqcn' => $fqcn, 'method' => $method, 'type' => 'model'];
+                    $this->hops[] = ['fqcn' => $fqcn, 'method' => $method, 'type' => 'model', 'visibility' => 'public'];
                 }
             }
 
@@ -299,10 +328,11 @@ class MethodTracer
                 }
 
                 if ($this->looksLikeModel($fqcn)) {
-                    $this->hops[] = ['fqcn' => $fqcn, 'method' => $method, 'type' => 'model'];
+                    $this->hops[] = ['fqcn' => $fqcn, 'method' => $method, 'type' => 'model', 'visibility' => 'public'];
                 } elseif (! $this->isFrameworkClass($fqcn)) {
                     $type = $this->classifyFqcn($fqcn);
-                    $this->hops[] = ['fqcn' => $fqcn, 'method' => $method, 'type' => $type];
+                    $visibility = $this->resolveVisibility($node);
+                    $this->hops[] = ['fqcn' => $fqcn, 'method' => $method, 'type' => $type, 'visibility' => $visibility];
                 }
             }
 
@@ -318,14 +348,19 @@ class MethodTracer
                 if (in_array($funcName, self::EVENT_FUNCTIONS, true)) {
                     $eventClass = $this->extractNewClass($node->args[0] ?? null);
                     if ($eventClass) {
-                        $this->hops[] = ['fqcn' => $this->useMap[$eventClass] ?? $eventClass, 'method' => '__construct', 'type' => 'event'];
+                        $this->hops[] = [
+                            'fqcn' => $this->useMap[$eventClass] ?? $eventClass,
+                            'method' => '__construct',
+                            'type' => 'event',
+                            'visibility' => 'public',
+                        ];
                     }
                 } elseif (in_array($funcName, self::DISPATCH_FUNCTIONS, true)) {
                     $jobClass = $this->extractNewClass($node->args[0] ?? null);
                     if ($jobClass) {
                         $jobFqcn = $this->useMap[$jobClass] ?? $jobClass;
                         if ($this->looksLikeJob($jobFqcn)) {
-                            $this->hops[] = ['fqcn' => $jobFqcn, 'method' => 'handle', 'type' => 'job'];
+                            $this->hops[] = ['fqcn' => $jobFqcn, 'method' => 'handle', 'type' => 'job', 'visibility' => 'public'];
                         }
                     }
                 }
@@ -347,16 +382,35 @@ class MethodTracer
                 }
                 if (! $this->looksLikeModel($fqcn) && ! $this->isFrameworkClass($fqcn) && str_contains($fqcn, '\\')) {
                     $type = $this->classifyFqcn($fqcn);
-                    $this->hops[] = ['fqcn' => $fqcn, 'method' => '__construct', 'type' => $type];
+                    $this->hops[] = [
+                        'fqcn' => $fqcn,
+                        'method' => '__construct',
+                        'type' => $type,
+                        'visibility' => 'public',
+                    ];
                 }
             }
 
+            private function resolveVisibility(Node\Expr\MethodCall|Node\Expr\StaticCall|Node\Expr\New_ $node): string
+            {
+                // Note: We can't easily know the visibility of the callee without re-parsing its class.
+                // However, MethodTracer->traceDeep() will load the class anyway.
+                // For now, let's default to 'public' here and let traceDeep or ensureNode refine it if needed.
+                // Actually, let's just make it 'public' for now in the hop, and have the actual node creation
+                // in GraphBuilder find the real visibility.
+                return 'public';
+            }
+ 
             // ── Helpers ───────────────────────────────────────────────────────
 
             /** Resolve a variable node to its FQCN, handling $this->prop chains */
             private function resolveVar(Node\Expr $node): ?string
             {
-                // $this->prop
+                // $this->prop OR $this (direct call)
+                if ($node instanceof Node\Expr\Variable && $node->name === 'this') {
+                    return $this->currentFqcn;
+                }
+
                 if (
                     $node instanceof Node\Expr\PropertyFetch
                     && $node->var instanceof Node\Expr\Variable
@@ -406,8 +460,20 @@ class MethodTracer
 
             private function classifyFqcn(string $fqcn): string
             {
+                if (str_contains($fqcn, 'Controller') || str_contains($fqcn, '\\Http\\')) {
+                    return 'action';
+                }
                 if (str_contains($fqcn, 'Repository') || str_contains($fqcn, '\\Repositories\\')) {
                     return 'repository';
+                }
+                if (str_contains($fqcn, 'Job') || str_contains($fqcn, '\\Jobs\\')) {
+                    return 'job';
+                }
+                if (str_contains($fqcn, 'Event') || str_contains($fqcn, '\\Events\\')) {
+                    return 'event';
+                }
+                if (str_contains($fqcn, '\\Models\\') || str_contains($fqcn, '\\Model\\')) {
+                    return 'model';
                 }
 
                 return 'service';
@@ -458,8 +524,13 @@ class MethodTracer
 
             public array $useMap = [];
 
+            public ?string $extends = null;
+
             public function enterNode(Node $node): null
             {
+                if ($node instanceof Node\Stmt\Class_) {
+                    $this->extends = $node->extends ? $node->extends->toString() : null;
+                }
                 if ($node instanceof Node\Stmt\ClassMethod) {
                     $name = $node->name->toString();
 
@@ -516,6 +587,7 @@ class MethodTracer
             'methods' => $visitor->methods,
             'deps' => $deps,
             'useMap' => $useMap,
+            'parent' => $visitor->extends ? ($useMap[$visitor->extends] ?? $visitor->extends) : null,
         ];
 
         return $this->classCache[$fqcn] = $result;

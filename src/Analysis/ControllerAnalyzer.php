@@ -15,6 +15,7 @@ class MethodDefinition
         public string $name,
         public array $dependencies, // varName => FQCN
         public ?Node\Stmt\ClassMethod $ast = null,
+        public string $visibility = 'public',
     ) {}
 }
 
@@ -28,6 +29,7 @@ class ControllerDefinition
         public array $methods,
         /** @var array<string, string> */
         public array $useMap = [],
+        public ?string $parent = null,
     ) {}
 }
 
@@ -92,6 +94,8 @@ class ControllerAnalyzer
 
             public array $methods = [];
 
+            public ?string $extends = null;
+
             private array $useMap;
 
             public function __construct(array $useMap)
@@ -101,6 +105,9 @@ class ControllerAnalyzer
 
             public function enterNode(Node $node): null
             {
+                if ($node instanceof Node\Stmt\Class_) {
+                    $this->extends = $node->extends ? $node->extends->toString() : null;
+                }
                 if (! $node instanceof Node\Stmt\ClassMethod) {
                     return null;
                 }
@@ -108,10 +115,12 @@ class ControllerAnalyzer
                 $methodName = $node->name->toString();
                 $deps = $this->extractTypedParams($node->params);
 
+                $visibility = $this->extractVisibility($node);
+ 
                 if ($methodName === '__construct') {
                     $this->constructorDeps = $deps;
                 } else {
-                    $this->methods[] = new MethodDefinition($methodName, $deps, $node);
+                    $this->methods[] = new MethodDefinition($methodName, $deps, $node, $visibility);
                 }
 
                 return null;
@@ -139,6 +148,18 @@ class ControllerAnalyzer
                 return $deps;
             }
 
+            private function extractVisibility(Node\Stmt\ClassMethod $node): string
+            {
+                if ($node->isPrivate()) {
+                    return 'private';
+                }
+                if ($node->isProtected()) {
+                    return 'protected';
+                }
+ 
+                return 'public';
+            }
+ 
             private function resolveType(Node $type): ?string
             {
                 if ($type instanceof Node\Name) {
@@ -163,6 +184,7 @@ class ControllerAnalyzer
             constructorDeps: $visitor->constructorDeps,
             methods: $visitor->methods,
             useMap: $parsed['useMap'],
+            parent: $visitor->extends ? ($parsed['useMap'][$visitor->extends] ?? $visitor->extends) : null,
         );
     }
 

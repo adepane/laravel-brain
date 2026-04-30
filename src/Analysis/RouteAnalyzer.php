@@ -346,7 +346,8 @@ class RouteAnalyzer
                 }
                 $value = $node instanceof Node\Arg ? $node->value : $node;
 
-                if ($value instanceof Node\Expr\Array_ && count($value->items) === 2) {
+                // [Controller::class, 'method']
+                if ($value instanceof Node\Expr\Array_ && count($value->items) >= 2) {
                     $classItem = $value->items[0];
                     $methodItem = $value->items[1];
                     if ($classItem && $methodItem) {
@@ -357,12 +358,24 @@ class RouteAnalyzer
                     }
                 }
 
+                // 'Controller@method' OR 'Controller' (for __invoke)
                 if ($value instanceof Node\Scalar\String_) {
-                    $parts = explode('@', $value->value, 2);
+                    if (str_contains($value->value, '@')) {
+                        $parts = explode('@', $value->value, 2);
 
-                    return [count($parts) === 2 ? $parts[0] : '', $parts[1] ?? $parts[0], null];
+                        return [$parts[0], $parts[1], null];
+                    }
+
+                    return [$value->value, '__invoke', null];
                 }
 
+                // Controller::class (for __invoke)
+                $classRef = $this->extractClassRef($value);
+                if ($classRef !== '') {
+                    return [$classRef, '__invoke', null];
+                }
+
+                // Closure routes
                 if ($value instanceof Node\Expr\Closure || $value instanceof Node\Expr\ArrowFunction) {
                     return ['Closure', '__invoke', $value];
                 }

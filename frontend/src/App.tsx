@@ -31,6 +31,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES))
+  const [rankDir, setRankDir] = useState<'LR' | 'TB'>('TB')
   const cyRef = useRef<Core | null>(null)
 
   const handleSelectTab = useCallback((tab: TabEntry) => {
@@ -48,18 +49,17 @@ export default function App() {
     load(tab.file)
   }, [activeTab, load])
 
-  // Auto-select tab from URL or fallback to first non-All tab (during render)
+  // Auto-select tab ONLY if tab ID is present in URL
   const [prevManifest, setPrevManifest] = useState(manifest)
   if (manifest !== prevManifest) {
     setPrevManifest(manifest)
     if (manifest && !activeTab) {
       const params = new URLSearchParams(window.location.search)
       const urlTabId = params.get('tab')
-      let targetTab = manifest.tabs.find((t) => t.id === urlTabId)
-      if (!targetTab && !urlTabId) {
-        targetTab = manifest.tabs.find((t) => t.id !== 'all') ?? manifest.tabs[0]
+      const targetTab = manifest.tabs.find((t) => t.id === urlTabId)
+      if (targetTab) {
+        handleSelectTab(targetTab)
       }
-      if (targetTab) handleSelectTab(targetTab)
     }
   }
 
@@ -110,11 +110,8 @@ export default function App() {
   }
 
   const groupedTabs = useMemo(() => {
-    if (!manifest) return { allTab: null, fileGroups: [] }
-
-    // Separate the "All" overview tab
-    const allTab = manifest.tabs.find((t) => t.id === 'all')
-    const routeTabs = manifest.tabs.filter((t) => t.id !== 'all')
+    if (!manifest) return { fileGroups: [] }
+    const routeTabs = manifest.tabs;
 
     // Group route tabs by their source route file or virtual category
     const byFile = new Map<string, TabEntry[]>()
@@ -165,7 +162,7 @@ export default function App() {
         return { fileName, prefixGroups }
       })
 
-    return { allTab: allTab ?? null, fileGroups }
+    return { fileGroups }
   }, [manifest])
 
   const typeCounts = useMemo(() => {
@@ -305,13 +302,14 @@ export default function App() {
         analyzedAt={manifest.analyzedAt}
         theme={theme}
         onLayoutChange={setLayout}
+        rankDir={rankDir}
+        onRankDirChange={setRankDir}
         onSearch={setSearchQuery}
         onToggleTheme={toggleTheme}
         cyRef={cyRef}
       />
       <div className="main">
         <LeftSidebar
-          allTab={groupedTabs.allTab ?? null}
           fileGroups={groupedTabs.fileGroups ?? []}
           activeId={activeTab?.id ?? null}
           loadingId={loadingTabId}
@@ -334,11 +332,37 @@ export default function App() {
               <p style={{ color: '#F44336' }}>Error: {tabState.error}</p>
             </div>
           )}
+          {!activeTab && !tabState.loading && (
+            <div className="graph-placeholder">
+              <div className="placeholder-icon">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg>
+              </div>
+              <h3>Select a route to explore</h3>
+              <p>Expand the files in the sidebar and choose a route or command to visualize its execution lifecycle and dependencies.</p>
+            </div>
+          )}
+          {!tabState.loading && activeTab && elements.length === 0 && !tabState.error && (
+             <div className="graph-placeholder">
+               <div className="placeholder-icon">
+                 <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                   <circle cx="12" cy="12" r="10" />
+                   <line x1="12" y1="8" x2="12" y2="12" />
+                   <line x1="12" y1="16" x2="12.01" y2="16" />
+                 </svg>
+               </div>
+               <h3>Empty Graph</h3>
+               <p>No nodes or edges found for this route.</p>
+             </div>
+          )}
           {!tabState.loading && elements.length > 0 && (
             <GraphView
+              key={activeTab?.id}
               elements={elements}
               layout={layout}
               searchQuery={searchQuery}
+              rankDir={rankDir}
               visibleTypes={visibleTypes}
               theme={theme}
               onNodeSelect={handleNodeSelect}

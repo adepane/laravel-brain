@@ -15,6 +15,8 @@ interface Props {
   analyzedAt?: string
   theme: 'dark' | 'light'
   onLayoutChange: (layout: string) => void
+  rankDir: 'LR' | 'TB'
+  onRankDirChange: (dir: 'LR' | 'TB') => void
   onSearch: (query: string) => void
   onToggleTheme: () => void
   cyRef: React.MutableRefObject<Core | null>
@@ -39,7 +41,7 @@ const LAYOUTS = [
   { value: 'grid', label: 'Grid' },
 ]
 
-export function Toolbar({ layout, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, cyRef }: Props) {
+export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, cyRef }: Props) {
   const [searchValue, setSearchValue] = useState('')
   const [showMermaid, setShowMermaid] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -170,6 +172,27 @@ export function Toolbar({ layout, nodeCount, edgeCount, visibleCount, activeTabL
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+ 
+            {layout === 'dagre' && (
+              <button
+                className="toolbar-btn toolbar-btn--rank"
+                onClick={() => onRankDirChange(rankDir === 'LR' ? 'TB' : 'LR')}
+                title={`Orientation: ${rankDir === 'LR' ? 'Horizontal' : 'Vertical'}. Click to toggle.`}
+              >
+                {rankDir === 'LR' ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="7" width="20" height="10" rx="2" />
+                    <line x1="8" y1="7" x2="8" y2="17" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: 'rotate(90deg)' }}>
+                    <rect x="2" y="7" width="20" height="10" rx="2" />
+                    <line x1="8" y1="7" x2="8" y2="17" />
+                  </svg>
+                )}
+                <span>{rankDir}</span>
+              </button>
+            )}
 
             <div className="toolbar-search-wrapper">
               <input

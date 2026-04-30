@@ -167,16 +167,7 @@ class GraphSplitter
         string $analyzedAt,
         int $totalRoutes,
     ): string {
-        $allEntry = [
-            'id' => 'all',
-            'label' => 'All',
-            'routeCount' => $totalRoutes,
-            'nodeCount' => $fullGraph->nodeCount(),
-            'edgeCount' => $fullGraph->edgeCount(),
-            'file' => '.graph-all.json',
-        ];
-
-        $tabs = [$allEntry];
+        $tabs = [];
         foreach ($manifest as $entry) {
             $tabs[] = [
                 'id' => $entry->id,
@@ -190,14 +181,20 @@ class GraphSplitter
             ];
         }
 
-        return json_encode([
+        $json = json_encode([
             'project' => $projectName,
             'analyzedAt' => $analyzedAt,
             'totalRoutes' => $totalRoutes,
             'totalNodes' => $fullGraph->nodeCount(),
             'totalEdges' => $fullGraph->edgeCount(),
             'tabs' => $tabs,
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+
+        if ($json === false) {
+            throw new \RuntimeException('Failed to encode manifest to JSON: '.json_last_error_msg());
+        }
+
+        return $json;
     }
 
     // ── Private helpers ────────────────────────────────────────────────────

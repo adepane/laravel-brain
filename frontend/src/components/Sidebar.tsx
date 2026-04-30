@@ -171,7 +171,17 @@ export function Sidebar({ selectedId, graphData, theme, onClose }: Props) {
       <div className="sidebar">
         <div className="sidebar-header">
           <button className="sidebar-close" onClick={onClose}>×</button>
-          <span className="type-badge" style={{ backgroundColor: color }}>{node.type}</span>
+          <div className="sidebar-badges">
+            <span className="type-badge" style={{ backgroundColor: color }}>{node.type}</span>
+            {typeof node.data?.visibility === 'string' && (
+              <span className={`visibility-badge visibility-badge--${node.data.visibility}`}>
+                {node.data.visibility === 'public' && '🔓 '}
+                {node.data.visibility === 'protected' && '🛡️ '}
+                {node.data.visibility === 'private' && '🔒 '}
+                {node.data.visibility}
+              </span>
+            )}
+          </div>
           <h2>{node.label}</h2>
         </div>
 

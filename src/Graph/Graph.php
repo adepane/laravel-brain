@@ -85,10 +85,16 @@ class Graph
             'edgeCount' => $this->edgeCount(),
         ]);
 
-        return json_encode([
+        $json = json_encode([
             'meta' => $meta,
             'nodes' => $this->nodes(),
             'edges' => $this->edges(),
-        ], JSON_UNESCAPED_SLASHES);
+        ], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+
+        if ($json === false) {
+            throw new \RuntimeException('Failed to encode graph to JSON: '.json_last_error_msg());
+        }
+
+        return $json;
     }
 }
