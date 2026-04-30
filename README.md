@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Visualize your Laravel application's full request lifecycle as an interactive graph.</strong><br/>
-  Understand how routes, controllers, services, models, jobs, and events connect — in seconds.
+  Understand how routes, controllers, services, models, jobs, events, commands, and channels connect — in seconds.
 </p>
 
 <p align="center">
@@ -18,26 +18,30 @@
 
 ## What is LaraMint\LaravelBrain?
 
-LaraMint\LaravelBrain is a premium developer tool that analyzes your Laravel codebase and renders an interactive node graph of your application's architecture. It traces every route through its controller, services, repositories, models, jobs, and events — giving you a bird's-eye view of the entire request lifecycle without reading a single line of code.
+LaraMint\LaravelBrain is a developer tool that analyzes your Laravel codebase and renders an interactive node graph of your application's architecture. It traces every route through its controller, services, repositories, models, jobs, events, Artisan commands, scheduled tasks, and broadcast channels — giving you a bird's-eye view of the entire application without reading a single line of code.
 
 ## Features
 
 - **Full lifecycle tracing** — Follows every route from HTTP verb → controller → service → repository → model → events/jobs
-- **Premium Interactive Graph** — Redesigned with a dark aesthetic, accent-colored nodes, and subtle interactive edges
+- **Artisan command discovery** — Maps class-based commands, closure commands from `routes/console.php`, and Kernel-registered commands
+- **Scheduler tracing** — Visualizes scheduled tasks (`command`, `job`, `call`) with their frequency
+- **Broadcast channel mapping** — Discovers class-based and closure channels from `routes/channels.php`
+- **DB query tracing** — Surfaces Eloquent and raw queries per method
+- **Fat-class detection** — Flags controllers and services with more than 300 lines or 10 methods
+- **Interactive graph** — Dark/light theme, accent-colored nodes, and interactive edges
 - **Per-route tabs** — Each route gets its own isolated subgraph tab
 - **Middleware mapping** — Shows which middleware guards each route
 - **Model relationships** — Displays `hasMany`, `belongsTo`, and other Eloquent relations
-- **N+1 detection** — Flags potential N+1 query patterns in method flowcharts
-- **Method flowcharts** — See internal flow as a step-by-step diagram, now with a large modal popup view
-- **Source viewer** — Read the actual source file inline or in a focused large popup
+- **Method flowcharts** — See internal flow as a step-by-step diagram with a large modal popup view
+- **Source viewer** — Read the actual source file inline or in a focused popup
 - **Export** — Export any graph as PNG or Mermaid diagram
-- **Multiple layouts** — Hierarchical, force-directed, breadth-first, circle, grid
-- **Dot-grid depth** — Modern UI with depth and clarity
+- **Multiple layouts** — Hierarchical (dagre), force-directed (cose-bilkent), breadth-first, circle, grid
+- **Watch mode** — Auto-rescans on PHP file changes
 
 ## Requirements
 
-- PHP 8.1+
-- Laravel 10, 11, or 12
+- PHP 8.0+
+- Laravel 9, 10, 11, 12, or 13
 - Composer
 
 ## Installation
@@ -69,6 +73,15 @@ This analyzes your entire codebase and writes the graph data to `storage/app/lar
   Done! Open the viewer at: http://localhost:8000/_laravel-brain
 ```
 
+### Watch mode
+
+Re-scan automatically whenever a PHP file changes:
+
+```bash
+php artisan brain:scan --watch
+php artisan brain:scan --watch --interval=5   # poll every 5 seconds (default: 3)
+```
+
 ### Open the viewer
 
 Navigate to `/_laravel-brain` in your browser while your Laravel app is running (e.g. via `php artisan serve`).
@@ -85,7 +98,10 @@ php artisan brain:scan
         ├─ ControllerAnalyzer → resolves controller classes + methods
         ├─ MethodTracer       → deep-traces call chains (services, repos, models)
         ├─ ModelAnalyzer      → extracts Eloquent relationships
-        └─ GraphBuilder       → assembles nodes + edges
+        ├─ QueryTracer        → surfaces DB queries per method
+        ├─ ConsoleAnalyzer    → discovers Artisan commands and scheduled tasks
+        ├─ ChannelAnalyzer    → discovers broadcast channels
+        └─ GraphBuilder       → assembles nodes + edges, flags fat classes
                 │
                 └─ Writes JSON → storage/app/laravel-brain/
 
@@ -111,15 +127,19 @@ This produces the full edge list used to build the graph.
 ## Graph Node Types
 
 | Node | Accent Color | Represents |
-|------|-------|------------|
+|------|-------------|------------|
 | Route | Green | HTTP endpoint (`GET /users`) |
 | Middleware | Orange | Middleware applied to route |
 | Controller | Blue | Controller class |
 | Action | Light Blue | Controller method |
-| Service | Purple | Service class |
+| Service | Purple | Service or helper class |
+| Repository | Purple (subtype) | Repository class |
 | Model | Red | Eloquent model |
 | Event | Yellow | Laravel event |
 | Job | Slate | Queued job |
+| Command | Teal | Artisan command |
+| Schedule | Teal | Scheduled task entry |
+| Channel | Indigo | Broadcast channel |
 
 ## Viewer Shortcuts
 
@@ -136,13 +156,14 @@ This produces the full edge list used to build the graph.
 | Fit all nodes | Toolbar → Fit button |
 | Export PNG | Toolbar → PNG button |
 | Export Mermaid | Toolbar → Mermaid button |
+| Toggle theme | Toolbar → ☀️ / 🌙 button |
 
 ## Routes Registered
 
 The package registers the following routes in your application (all under the `/_laravel-brain` prefix):
 
 ```
-GET /_laravel-brain          → Interactive graph viewer (SPA)
+GET /_laravel-brain              → Interactive graph viewer (SPA)
 GET /_laravel-brain/api/source   → Returns PHP source file content
 GET /_laravel-brain/assets/*     → Serves frontend static assets
 GET /_laravel-brain/.graph-*.json → Serves graph data written by the scan
@@ -166,7 +187,7 @@ storage/app/laravel-brain/
 
 ## Security
 
-The `/_laravel-brain` routes are only registered in `local` environment by default. Since it's a `require-dev` dependency, it will not be present in production builds (`composer install --no-dev`).
+The `/_laravel-brain` routes are only registered in the `local` environment by default. Since it's a `require-dev` dependency, it will not be present in production builds (`composer install --no-dev`).
 
 If you do install it in a non-production environment accessible over a network, consider protecting the routes with middleware.
 
