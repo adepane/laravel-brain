@@ -15,6 +15,9 @@ class ScanCommand extends Command
 
     protected $description = 'Analyze this Laravel project and open the interactive graph viewer';
 
+    /** @var array<string, float> step start times */
+    private array $stepTimers = [];
+
     public function handle(): int
     {
         ini_set('memory_limit', '1024M');
@@ -34,13 +37,11 @@ class ScanCommand extends Command
     {
         $interval = max(1, (int) $this->option('interval'));
 
-        $this->line('');
-        $this->line('  <fg=magenta>LaraMint\LaravelBrain — watch mode</>');
-        $this->line("  <fg=gray>Polling every {$interval}s for changes in app/, routes/, config/</>");
-        $this->line('  <fg=gray>Press Ctrl+C to stop</>');
-        $this->line('');
+        $this->newLine();
+        $this->renderHeader();
+        $this->line("  <fg=gray>Watch mode — polling every {$interval}s  ·  Ctrl+C to stop</>");
+        $this->newLine();
 
-        // Initial scan
         $this->runScan($projectPath, verbose: true);
         $mtimes = $this->collectMtimes($projectPath);
 
@@ -51,13 +52,14 @@ class ScanCommand extends Command
             $changed = $this->detectChanges($mtimes, $current);
 
             if (! empty($changed)) {
-                $this->line('  <fg=yellow>Changed:</> '.$this->summariseChanged($changed));
+                $this->newLine();
+                $this->line('  <fg=yellow>⚡ Changed:</> '.$this->summariseChanged($changed));
                 $this->runScan($projectPath, verbose: false);
                 $mtimes = $current;
             }
         }
 
-        return self::SUCCESS; // @phpstan-ignore-line (unreachable, loop exits via Ctrl+C)
+        return self::SUCCESS; // @phpstan-ignore-line
     }
 
     private function collectMtimes(string $projectPath): array
@@ -96,7 +98,7 @@ class ScanCommand extends Command
         }
         foreach (array_keys($old) as $path) {
             if (! isset($new[$path])) {
-                $changed[] = $path; // deleted
+                $changed[] = $path;
             }
         }
 
@@ -118,16 +120,20 @@ class ScanCommand extends Command
 
     private function runScan(string $projectPath, bool $verbose): int
     {
+        $totalStart = microtime(true);
+
         if ($verbose) {
-            $this->line('');
-            $this->line('  <fg=magenta>LaraMint\LaravelBrain — analyzing project...</>');
+            $this->newLine();
+            $this->renderHeader();
             $this->line('  <fg=gray>Path: '.$projectPath.'</>');
-            $this->line('');
-            $this->line('  Scanning routes, controllers, models and call chains...');
+            $this->newLine();
         }
 
         $analyzer = new ProjectAnalyzer;
-        $result = $analyzer->analyze($projectPath);
+
+        $result = $analyzer->analyze($projectPath, function (string $event, array $data) use ($verbose): void {
+            $this->handleProgress($event, $data, $verbose);
+        });
 
         $storageDir = storage_path('app/laravel-brain');
         if (! is_dir($storageDir)) {
@@ -142,15 +148,108 @@ class ScanCommand extends Command
         }
 
         if ($verbose) {
+            $elapsed = microtime(true) - $totalStart;
+            $this->newLine();
+            $this->renderSummary($result->fullGraph->nodeCount(), $result->fullGraph->edgeCount(), $result->totalRoutes, $result->totalCommands, $result->totalChannels, $elapsed);
             $url = rtrim(config('app.url', 'http://localhost'), '/').'/_laravel-brain';
-            $this->line('');
-            $this->line("  <fg=green>Done!</> Open the viewer at: <fg=cyan>{$url}</>");
-            $this->line('');
+            $this->newLine();
+            $this->line("  Open the viewer: <fg=cyan;options=bold>{$url}</>");
+            $this->newLine();
         } else {
-            $this->line('  <fg=green>✓</> Graph updated at <fg=cyan>'.date('H:i:s').'</> — '.
-                $result->fullGraph->nodeCount().' nodes, '.$result->fullGraph->edgeCount().' edges');
+            $elapsed = microtime(true) - $totalStart;
+            $this->line(
+                '  <fg=green>✓</> Graph refreshed at <fg=cyan>'.date('H:i:s').'</>  '.
+                '<fg=gray>'.$result->fullGraph->nodeCount().' nodes · '.$result->fullGraph->edgeCount().' edges · '.
+                number_format($elapsed, 1).'s</>'
+            );
         }
 
         return self::SUCCESS;
+    }
+
+    // ── Progress handler ──────────────────────────────────────────────────────
+
+    private function handleProgress(string $event, array $data, bool $verbose): void
+    {
+        if (! $verbose) {
+            return;
+        }
+
+        match ($event) {
+            'step:start' => $this->renderStepStart($data),
+            'step:done'  => $this->renderStepDone($data),
+            default      => null,
+        };
+    }
+
+    private function renderStepStart(array $data): void
+    {
+        $step = $data['step'];
+        $label = $data['label'] ?? $step;
+
+        $this->stepTimers[$step] = microtime(true);
+
+        $this->getOutput()->write(
+            sprintf('  <fg=gray>○</> %-38s', $label.'...')
+        );
+    }
+
+    private function renderStepDone(array $data): void
+    {
+        $step = $data['step'];
+        $count = $data['count'] ?? null;
+        $unit = $data['unit'] ?? null;
+        $extra = $data['extra'] ?? null;
+
+        $elapsed = isset($this->stepTimers[$step])
+            ? microtime(true) - $this->stepTimers[$step]
+            : 0.0;
+
+        $countStr = '';
+        if ($count !== null && $unit !== null) {
+            $suffix = $count === 1 ? $unit : $unit.'s';
+            $countStr = "<fg=yellow>{$count} {$suffix}</>";
+        }
+        if ($extra !== null) {
+            $countStr .= ($countStr ? ', ' : '')."<fg=gray>{$extra}</>";
+        }
+
+        $timeStr = '<fg=gray>('.number_format($elapsed, 2).'s)</>';
+
+        $this->getOutput()->write(
+            "\r  <fg=green>✓</> ".sprintf('%-38s', ($data['label'] ?? $step).'...')
+            ."  {$countStr}  {$timeStr}\n"
+        );
+    }
+
+    // ── UI helpers ────────────────────────────────────────────────────────────
+
+    private function renderHeader(): void
+    {
+        $this->line('  <fg=magenta;options=bold>┌─────────────────────────────────────────┐</>');
+        $this->line('  <fg=magenta;options=bold>│</>  <fg=white;options=bold>Laravel Brain</>  <fg=gray>— project analysis</>       <fg=magenta;options=bold>│</>');
+        $this->line('  <fg=magenta;options=bold>└─────────────────────────────────────────┘</>');
+    }
+
+    private function renderSummary(int $nodes, int $edges, int $routes, int $commands, int $channels, float $elapsed): void
+    {
+        $this->line('  <fg=gray>─────────────────────────────────────────</>');
+        $this->line('  <options=bold>Summary</>');
+        $this->newLine();
+
+        $rows = [
+            ['Nodes',      "<fg=cyan>{$nodes}</>"],
+            ['Edges',      "<fg=cyan>{$edges}</>"],
+            ['Routes',     "<fg=cyan>{$routes}</>"],
+            ['Commands',   "<fg=cyan>{$commands}</>"],
+            ['Channels',   "<fg=cyan>{$channels}</>"],
+            ['Total time', '<fg=yellow>'.number_format($elapsed, 2).'s</>'],
+        ];
+
+        foreach ($rows as [$label, $value]) {
+            $this->line(sprintf('    <fg=gray>%-14s</> %s', $label, $value));
+        }
+
+        $this->line('  <fg=gray>─────────────────────────────────────────</>');
     }
 }
