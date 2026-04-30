@@ -94,6 +94,8 @@ class RouteAnalyzer
 
             private array $middlewareStack = [];
 
+            private array $namespaceStack = [];
+
             private array $useMap;
 
             private string $file;
@@ -131,11 +133,16 @@ class RouteAnalyzer
                     return null;
                 }
 
-                // MethodCall: Route::middleware([...])->group(), Route::prefix('x')->group()
+                // MethodCall: Route::middleware([...])->group(), Route::prefix('x')->group(), Route::namespace('x')->group()
+                // OR: Route::middleware([...])->get('/test', ...)
                 if ($node instanceof Node\Expr\MethodCall) {
                     $methodName = $node->name instanceof Node\Identifier ? $node->name->toString() : null;
                     if ($methodName === 'group') {
                         $this->enterGroupFromMethodChain($node);
+                    } elseif (in_array($methodName, self::HTTP_METHODS, true)) {
+                        $this->handleHttpRoute($node, $methodName);
+                    } elseif (in_array($methodName, ['resource', 'apiResource'], true)) {
+                        $this->handleResource($node, $methodName);
                     }
                 }
 
@@ -156,12 +163,15 @@ class RouteAnalyzer
                     if (! empty($this->middlewareStack)) {
                         array_pop($this->middlewareStack);
                     }
+                    if (! empty($this->namespaceStack)) {
+                        array_pop($this->namespaceStack);
+                    }
                 }
 
                 return null;
             }
 
-            private function handleHttpRoute(Node\Expr\StaticCall $node, string $method): void
+            private function handleHttpRoute(Node\Expr\StaticCall|Node\Expr\MethodCall $node, string $method): void
             {
                 $uri = $this->extractString($node->args[0] ?? null);
                 if ($uri === null) {
@@ -170,10 +180,31 @@ class RouteAnalyzer
 
                 [$controller, $actionMethod, $closureNode] = $this->extractAction($node->args[1] ?? null);
 
-                $fullUri = implode('', $this->prefixStack).'/'.ltrim($uri, '/');
+                // If it's a MethodCall, we might have prefixes/middlewares in the chain
+                $chainPrefix = '';
+                $chainMiddlewares = [];
+                $chainNamespace = '';
+                if ($node instanceof Node\Expr\MethodCall) {
+                    $this->walkChain($node->var, $chainPrefix, $chainMiddlewares, $chainNamespace);
+                }
+
+                if ($controller !== 'Closure' && $controller !== '' && ! str_starts_with($controller, '\\')) {
+                    $namespace = implode('\\', array_filter($this->namespaceStack));
+                    if ($chainNamespace) {
+                        $namespace = $namespace ? $namespace.'\\'.$chainNamespace : $chainNamespace;
+                    }
+                    if ($namespace) {
+                        $controller = rtrim($namespace, '\\').'\\'.ltrim($controller, '\\');
+                    }
+                }
+
+                $fullUri = implode('', $this->prefixStack).$chainPrefix.'/'.ltrim($uri, '/');
                 $fullUri = '/'.ltrim($fullUri, '/');
 
-                $middlewares = array_merge(...$this->middlewareStack ?: [[]]);
+                $middlewares = array_merge(
+                    array_merge(...$this->middlewareStack ?: [[]]),
+                    $chainMiddlewares
+                );
 
                 $this->routes[] = new RouteDefinition(
                     method: strtoupper($method),
@@ -189,7 +220,7 @@ class RouteAnalyzer
                 );
             }
 
-            private function handleResource(Node\Expr\StaticCall $node, string $type): void
+            private function handleResource(Node\Expr\StaticCall|Node\Expr\MethodCall $node, string $type): void
             {
                 $uri = $this->extractString($node->args[0] ?? null);
                 $controllerArg = $node->args[1] ?? null;
@@ -198,9 +229,30 @@ class RouteAnalyzer
                 }
 
                 $controllerFqcn = $this->extractClassRef($controllerArg->value);
-                $fullUri = implode('', $this->prefixStack).'/'.ltrim($uri, '/');
+
+                // Chain handling
+                $chainPrefix = '';
+                $chainMiddlewares = [];
+                $chainNamespace = '';
+                if ($node instanceof Node\Expr\MethodCall) {
+                    $this->walkChain($node->var, $chainPrefix, $chainMiddlewares, $chainNamespace);
+                }
+
+                if ($controllerFqcn !== '' && ! str_starts_with($controllerFqcn, '\\')) {
+                    $namespace = implode('\\', array_filter($this->namespaceStack));
+                    if ($chainNamespace) {
+                        $namespace = $namespace ? $namespace.'\\'.$chainNamespace : $chainNamespace;
+                    }
+                    if ($namespace) {
+                        $controllerFqcn = rtrim($namespace, '\\').'\\'.ltrim($controllerFqcn, '\\');
+                    }
+                }
+                $fullUri = implode('', $this->prefixStack).$chainPrefix.'/'.ltrim($uri, '/');
                 $fullUri = '/'.ltrim($fullUri, '/');
-                $middlewares = array_merge(...$this->middlewareStack ?: [[]]);
+                $middlewares = array_merge(
+                    array_merge(...$this->middlewareStack ?: [[]]),
+                    $chainMiddlewares
+                );
 
                 $methods = $type === 'apiResource'
                     ? ['GET:index', 'POST:store', 'GET:show', 'PUT:update', 'DELETE:destroy']
@@ -226,6 +278,7 @@ class RouteAnalyzer
             {
                 $prefix = '';
                 $middlewares = [];
+                $namespace = '';
 
                 foreach ($node->args as $arg) {
                     if (! $arg->value instanceof Node\Expr\Array_) {
@@ -240,12 +293,15 @@ class RouteAnalyzer
                             $prefix = $this->extractString($item) ?? '';
                         } elseif ($key === 'middleware') {
                             $middlewares = $this->extractMiddlewareList($item->value);
+                        } elseif ($key === 'namespace') {
+                            $namespace = $this->extractString($item) ?? '';
                         }
                     }
                 }
 
                 $this->prefixStack[] = $prefix ? '/'.ltrim($prefix, '/') : '';
                 $this->middlewareStack[] = $middlewares;
+                $this->namespaceStack[] = $namespace;
             }
 
             private function enterGroupFromMethodChain(Node\Expr\MethodCall $node): void
@@ -253,13 +309,15 @@ class RouteAnalyzer
                 // Walk up the chain: ->group() called on ->middleware([...])->prefix(...) etc.
                 $prefix = '';
                 $middlewares = [];
-                $this->walkChain($node->var, $prefix, $middlewares);
+                $namespace = '';
+                $this->walkChain($node->var, $prefix, $middlewares, $namespace);
 
                 $this->prefixStack[] = $prefix ? '/'.ltrim($prefix, '/') : '';
                 $this->middlewareStack[] = $middlewares;
+                $this->namespaceStack[] = $namespace;
             }
 
-            private function walkChain(Node $node, string &$prefix, array &$middlewares): void
+            private function walkChain(Node $node, string &$prefix, array &$middlewares, string &$namespace): void
             {
                 if ($node instanceof Node\Expr\StaticCall || $node instanceof Node\Expr\MethodCall) {
                     $method = $node->name instanceof Node\Identifier ? $node->name->toString() : null;
@@ -268,11 +326,13 @@ class RouteAnalyzer
                         $middlewares = array_merge($middlewares, $this->extractMiddlewareList($node->args[0]->value));
                     } elseif ($method === 'prefix' && ! empty($node->args)) {
                         $prefix = $this->extractString($node->args[0]) ?? '';
+                    } elseif ($method === 'namespace' && ! empty($node->args)) {
+                        $namespace = $this->extractString($node->args[0]) ?? '';
                     }
 
                     // Walk the callee
                     $callee = $node instanceof Node\Expr\MethodCall ? $node->var : $node->class;
-                    $this->walkChain($callee, $prefix, $middlewares);
+                    $this->walkChain($callee, $prefix, $middlewares, $namespace);
                 }
             }
 

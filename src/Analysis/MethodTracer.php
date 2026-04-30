@@ -534,7 +534,7 @@ class MethodTracer
         // Fallback: try common locations using full relative path
         if ($this->projectRoot !== '') {
             $relative = str_replace('\\', '/', $fqcn).'.php';
-            foreach (['app/', 'src/'] as $prefix) {
+            foreach (['app/Http/Controllers/', 'app/', 'src/'] as $prefix) {
                 $path = $this->projectRoot.'/'.$prefix.$relative;
                 if (file_exists($path)) {
                     return $path;

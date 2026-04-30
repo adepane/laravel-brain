@@ -198,7 +198,7 @@ class ControllerAnalyzer
 
         // Fallback: try common locations using full relative path
         $relative = str_replace('\\', '/', $fqcn).'.php';
-        foreach (['app/', 'src/'] as $prefix) {
+        foreach (['app/Http/Controllers/', 'app/', 'src/'] as $prefix) {
             $path = $projectRoot.'/'.$prefix.$relative;
             if (file_exists($path)) {
                 return $path;
