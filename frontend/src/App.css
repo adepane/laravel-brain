@@ -9,6 +9,11 @@
   --text: #cdd6f4;
   --text-dim: rgba(255,255,255,0.45);
   --accent: #7c3aed;
+  --toolbar-bg: rgba(17, 18, 24, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --dropdown-bg: rgba(24, 28, 39, 0.95);
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-border: rgba(255, 255, 255, 0.12);
 }
 
 [data-theme="light"] {
@@ -18,6 +23,11 @@
   --text: #1e1e2e;
   --text-dim: rgba(0,0,0,0.45);
   --accent: #7c3aed;
+  --toolbar-bg: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --dropdown-bg: rgba(255, 255, 255, 0.98);
+  --input-bg: rgba(0, 0, 0, 0.03);
+  --input-border: rgba(0, 0, 0, 0.1);
 }
 
 body {
@@ -55,12 +65,16 @@ body {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  height: 48px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  gap: 16px;
+  padding: 0 24px;
+  height: 64px;
+  background: var(--toolbar-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
+  z-index: 100;
+  position: relative;
 }
 
 .toolbar-brand {
@@ -81,53 +95,79 @@ body {
 }
 
 .stat-chip {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 2px 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 4px 10px;
   font-size: 11px;
   color: var(--text-dim);
+  font-weight: 500;
+  transition: all 0.2s ease;
 }
 
 .stat-chip--warn {
-  border-color: rgba(255, 160, 0, 0.5);
+  border-color: rgba(255, 160, 0, 0.3);
+  background: rgba(255, 160, 0, 0.1);
   color: #FFA000;
+}
+
+.stat-chip--stale {
+  border-color: rgba(244, 67, 54, 0.3);
+  background: rgba(244, 67, 54, 0.1);
+  color: #F44336;
+  cursor: pointer;
+}
+.stat-chip--stale:hover {
+  background: rgba(244, 67, 54, 0.2);
+  transform: translateY(-1px);
 }
 
 .toolbar-controls {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
   margin-left: auto;
 }
 
 .toolbar-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   position: relative;
 }
 
 .toolbar-group:not(:last-child)::after {
   content: '';
   width: 1px;
-  height: 20px;
-  background: var(--border);
-  margin-left: 8px;
+  height: 24px;
+  background: var(--glass-border);
+  margin-left: 10px;
 }
 
 .toolbar-select, .toolbar-search {
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--text);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
+  border-radius: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
   font-family: inherit;
   outline: none;
+  transition: all 0.2s ease;
 }
 
-.toolbar-search { width: 160px; }
+.toolbar-select:hover, .toolbar-search:hover {
+  background: var(--input-bg);
+  border-color: rgba(139, 111, 232, 0.4);
+}
+
+.toolbar-select:focus, .toolbar-search:focus {
+  border-color: #8B6FE8;
+  background: rgba(139, 111, 232, 0.08);
+  box-shadow: 0 0 0 4px rgba(139, 111, 232, 0.15);
+}
+
+.toolbar-search { width: 180px; }
 .toolbar-search-wrapper { position: relative; }
 
 @media (max-width: 1200px) {
@@ -145,26 +185,52 @@ body {
 }
 
 .toolbar-btn {
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--text);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
+  border-radius: 10px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   white-space: nowrap;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
+
 .toolbar-btn:hover:not(:disabled) { 
-  background: var(--border);
-  border-color: var(--text-dim);
+  background: var(--input-bg);
+  border-color: rgba(139, 111, 232, 0.6);
+  transform: translateY(-1px);
+  color: var(--text);
 }
+
 .toolbar-btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(0px);
+}
+
+.toolbar-btn--rank {
+  background: rgba(139, 111, 232, 0.1);
+  border-color: rgba(139, 111, 232, 0.2);
+  color: #a78bfa;
+}
+
+.toolbar-btn--rank:hover {
+  background: rgba(139, 111, 232, 0.2);
+  border-color: #8B6FE8;
+}
+
+.toolbar-btn--scan {
+  background: #8B6FE8;
+  color: white;
+  border: none;
+}
+.toolbar-btn--scan:hover {
+  background: #7c3aed;
+  box-shadow: 0 4px 12px rgba(139, 111, 232, 0.4);
 }
 .toolbar-btn:disabled {
   opacity: 0.5;
@@ -173,6 +239,69 @@ body {
 .toolbar-btn--loading { opacity: 0.7; cursor: wait; }
 .animate-spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* ── Dropdowns ────────────────────────────────── */
+.action-dropdown {
+  position: relative;
+}
+
+.action-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: var(--dropdown-bg);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 8px;
+  min-width: 200px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: dropdownIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dropdown-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+}
+
+.dropdown-item label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 4px;
+}
+
+.dropdown-item .toolbar-btn,
+.dropdown-item .toolbar-select {
+  width: 100%;
+}
+
+.dropdown-chevron {
+  font-size: 10px;
+  opacity: 0.5;
+  margin-left: 4px;
+}
+
+.toolbar-btn--active {
+  background: rgba(139, 111, 232, 0.15);
+  border-color: #8B6FE8;
+  color: #fff;
+}
+
+.w-full { width: 100%; }
 
 /* ── Sidebar ──────────────────────────────────── */
 .sidebar-resizable {

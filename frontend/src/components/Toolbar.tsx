@@ -41,6 +41,34 @@ const LAYOUTS = [
   { value: 'grid', label: 'Grid' },
 ]
 
+
+
+function ActionDropdown({ label, icon, children }: { label: string, icon: React.ReactNode, children: React.ReactNode }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setIsOpen(false)
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  return (
+    <div className="action-dropdown" ref={ref}>
+      <button className={`toolbar-btn ${isOpen ? 'toolbar-btn--active' : ''}`} onClick={() => setIsOpen(!isOpen)}>
+        {icon} <span>{label}</span> <span className="dropdown-chevron">▾</span>
+      </button>
+      {isOpen && (
+        <div className="action-dropdown-menu">
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, cyRef }: Props) {
   const [searchValue, setSearchValue] = useState('')
   const [showMermaid, setShowMermaid] = useState(false)
@@ -161,39 +189,47 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
         </div>
 
         <div className="toolbar-controls">
+          {/* Group 1: View */}
           <div className="toolbar-group">
-            <select
-              value={layout}
-              onChange={(e) => onLayoutChange(e.target.value)}
-              className="toolbar-select"
-              title="Change graph layout"
+            <ActionDropdown 
+              label="View" 
+              icon={<span>⊡</span>}
             >
-              {LAYOUTS.map(({ value, label }) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
- 
-            {layout === 'dagre' && (
-              <button
-                className="toolbar-btn toolbar-btn--rank"
-                onClick={() => onRankDirChange(rankDir === 'LR' ? 'TB' : 'LR')}
-                title={`Orientation: ${rankDir === 'LR' ? 'Horizontal' : 'Vertical'}. Click to toggle.`}
-              >
-                {rankDir === 'LR' ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="2" y="7" width="20" height="10" rx="2" />
-                    <line x1="8" y1="7" x2="8" y2="17" />
-                  </svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: 'rotate(90deg)' }}>
-                    <rect x="2" y="7" width="20" height="10" rx="2" />
-                    <line x1="8" y1="7" x2="8" y2="17" />
-                  </svg>
-                )}
-                <span>{rankDir}</span>
-              </button>
-            )}
+              <div className="dropdown-item">
+                <label>Layout</label>
+                <select
+                  value={layout}
+                  onChange={(e) => onLayoutChange(e.target.value)}
+                  className="toolbar-select"
+                >
+                  {LAYOUTS.map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </div>
 
+              {layout === 'dagre' && (
+                <div className="dropdown-item">
+                  <label>Orientation</label>
+                  <button
+                    className="toolbar-btn toolbar-btn--rank"
+                    onClick={() => onRankDirChange(rankDir === 'LR' ? 'TB' : 'LR')}
+                  >
+                    {rankDir === 'LR' ? 'Horizontal (LR)' : 'Vertical (TB)'}
+                  </button>
+                </div>
+              )}
+
+              <div className="dropdown-item">
+                <button onClick={handleFit} className="toolbar-btn w-full">
+                  <span>⊡</span> <span>Fit to Screen</span>
+                </button>
+              </div>
+            </ActionDropdown>
+          </div>
+ 
+          {/* Group 2: Search */}
+          <div className="toolbar-group">
             <div className="toolbar-search-wrapper">
               <input
                 type="search"
@@ -204,31 +240,36 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
               />
             </div>
           </div>
-
+ 
+          {/* Group 3: Exports */}
           <div className="toolbar-group">
-            <button onClick={handleFit} className="toolbar-btn" title="Fit graph to screen">
-              <span>⊡</span> <span>Fit</span>
-            </button>
-
-            <button onClick={handleExportPng} className="toolbar-btn" title="Download graph as PNG">
-              <span>🖼</span> <span>PNG</span>
-            </button>
-
-            <button
-              onClick={handleExportMermaid}
-              className="toolbar-btn"
-              title="Copy Mermaid diagram code"
-              disabled={!graphData}
+            <ActionDropdown 
+              label="Export" 
+              icon={<span>🖼</span>}
             >
-              <span>🗺</span> <span>Mermaid</span>
-            </button>
+              <div className="dropdown-item">
+                <button onClick={handleExportPng} className="toolbar-btn w-full">
+                  <span>🖼</span> <span>Download PNG</span>
+                </button>
+              </div>
+              <div className="dropdown-item">
+                <button
+                  onClick={handleExportMermaid}
+                  className="toolbar-btn w-full"
+                  disabled={!graphData}
+                >
+                  <span>🗺</span> <span>Copy Mermaid Code</span>
+                </button>
+              </div>
+            </ActionDropdown>
           </div>
-
+ 
+          {/* Group 4: System */}
           <div className="toolbar-group">
             <button
               onClick={handleScan}
               className={`toolbar-btn toolbar-btn--scan ${scanning ? 'toolbar-btn--loading' : ''}`}
-              title="Re-scan the entire Laravel project"
+              title="Re-scan project"
               disabled={scanning}
             >
               {scanning ? (
@@ -246,7 +287,7 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
                 </>
               )}
             </button>
-
+ 
             <button
               onClick={onToggleTheme}
               className="theme-toggle"
