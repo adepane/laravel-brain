@@ -572,17 +572,17 @@ class GraphBuilder
                 return $m->visibility;
             }
         }
- 
+
         return 'public';
     }
- 
+
     private function extractVisibility(string $fqcn, string $method): string
     {
         $file = $this->resolveFile($fqcn);
         if ($file === '' || ! file_exists($file)) {
             return 'public';
         }
- 
+
         if (! isset($this->parseCache[$file])) {
             $this->parseCache[$file] = $this->parser->parse($file);
         }
@@ -590,14 +590,14 @@ class GraphBuilder
         if (! $parsed || ! $parsed['ast']) {
             return 'public';
         }
- 
+
         $traverser = new NodeTraverser;
         $finder = new class($method) extends NodeVisitorAbstract
         {
             public string $visibility = 'public';
- 
+
             public function __construct(private string $target) {}
- 
+
             public function enterNode(PhpNode $node): ?int
             {
                 if ($node instanceof PhpNode\Stmt\ClassMethod
@@ -609,19 +609,19 @@ class GraphBuilder
                     } else {
                         $this->visibility = 'public';
                     }
- 
+
                     return NodeVisitor::STOP_TRAVERSAL;
                 }
- 
+
                 return null;
             }
         };
         $traverser->addVisitor($finder);
         $traverser->traverse($parsed['ast']);
- 
+
         return $finder->visibility;
     }
- 
+
     private function hasN1InSteps(array $steps): bool
     {
         foreach ($steps as $step) {

@@ -400,7 +400,7 @@ class MethodTracer
                 // in GraphBuilder find the real visibility.
                 return 'public';
             }
- 
+
             // ── Helpers ───────────────────────────────────────────────────────
 
             /** Resolve a variable node to its FQCN, handling $this->prop chains */

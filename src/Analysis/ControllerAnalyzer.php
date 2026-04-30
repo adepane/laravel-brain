@@ -116,7 +116,7 @@ class ControllerAnalyzer
                 $deps = $this->extractTypedParams($node->params);
 
                 $visibility = $this->extractVisibility($node);
- 
+
                 if ($methodName === '__construct') {
                     $this->constructorDeps = $deps;
                 } else {
@@ -156,10 +156,10 @@ class ControllerAnalyzer
                 if ($node->isProtected()) {
                     return 'protected';
                 }
- 
+
                 return 'public';
             }
- 
+
             private function resolveType(Node $type): ?string
             {
                 if ($type instanceof Node\Name) {
