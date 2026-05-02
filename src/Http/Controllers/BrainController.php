@@ -33,7 +33,7 @@ class BrainController extends Controller
         set_time_limit(300);
 
         $projectPath = base_path();
-        $analyzer    = new ProjectAnalyzer;
+        $analyzer = new ProjectAnalyzer;
 
         ob_start();
         $result = $analyzer->analyze($projectPath);
@@ -52,8 +52,8 @@ class BrainController extends Controller
         }
 
         return response()->json([
-            'success'    => true,
-            'message'    => 'Project scan completed successfully.',
+            'success' => true,
+            'message' => 'Project scan completed successfully.',
             'analyzedAt' => $result->analyzedAt,
         ]);
     }
@@ -69,13 +69,13 @@ class BrainController extends Controller
         set_time_limit(120);
 
         $validated = $request->validate([
-            'method'      => 'required|in:GET,POST,PUT,PATCH,DELETE,HEAD',
-            'url'         => 'required|url',
-            'count'       => 'required|integer|min:1|max:200',
+            'method' => 'required|in:GET,POST,PUT,PATCH,DELETE,HEAD',
+            'url' => 'required|url',
+            'count' => 'required|integer|min:1|max:200',
             'concurrency' => 'required|integer|min:1|max:20',
-            'headers'     => 'nullable|array',
-            'body'        => 'nullable|string',
-            'timeout'     => 'nullable|numeric|min:1|max:30',
+            'headers' => 'nullable|array',
+            'body' => 'nullable|string',
+            'timeout' => 'nullable|numeric|min:1|max:30',
         ]);
 
         if (! $this->isAllowedHost($validated['url'])) {
@@ -161,8 +161,8 @@ class BrainController extends Controller
      */
     private function isAllowedHost(string $url): bool
     {
-        $host            = (string) parse_url($url, PHP_URL_HOST);
-        $allowedHosts    = ['localhost', '127.0.0.1', '::1', '0.0.0.0'];
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        $allowedHosts = ['localhost', '127.0.0.1', '::1', '0.0.0.0'];
         $allowedSuffixes = ['.test', '.local'];
 
         return in_array($host, $allowedHosts, true)
@@ -194,7 +194,7 @@ class BrainController extends Controller
             return null;
         }
 
-        $raw  = file_get_contents($path);
+        $raw = file_get_contents($path);
         $data = json_decode((string) $raw, true);
 
         if (! is_array($data)) {
@@ -213,18 +213,18 @@ class BrainController extends Controller
     private function serveFile(string $filePath): Response
     {
         $mimes = [
-            'js'    => 'application/javascript',
-            'css'   => 'text/css',
-            'svg'   => 'image/svg+xml',
-            'png'   => 'image/png',
-            'ico'   => 'image/x-icon',
-            'json'  => 'application/json',
-            'html'  => 'text/html',
+            'js' => 'application/javascript',
+            'css' => 'text/css',
+            'svg' => 'image/svg+xml',
+            'png' => 'image/png',
+            'ico' => 'image/x-icon',
+            'json' => 'application/json',
+            'html' => 'text/html',
             'woff2' => 'font/woff2',
-            'woff'  => 'font/woff',
+            'woff' => 'font/woff',
         ];
 
-        $ext  = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
         $mime = $mimes[$ext] ?? 'application/octet-stream';
 
         return response(file_get_contents($filePath), 200, ['Content-Type' => $mime]);
@@ -237,7 +237,7 @@ class BrainController extends Controller
             return '';
         }
 
-        $full     = $base.($file !== '' ? '/'.ltrim($file, '/') : '');
+        $full = $base.($file !== '' ? '/'.ltrim($file, '/') : '');
         $realFull = realpath($full);
 
         if (! $realFull) {
