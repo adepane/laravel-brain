@@ -1,4 +1,5 @@
 export const LARGE_GRAPH_THRESHOLD = 80
+export const PACKET_ANIMATION_THRESHOLD = 40
 
 export const ACCENT_COLORS: Record<string, string> = {
   route: '#4CAF50',
