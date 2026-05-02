@@ -137,27 +137,14 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
     <>
       <div className="toolbar">
         <div className="toolbar-brand">
-          {theme === 'dark' ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="260" height="56" viewBox="0 0 260 56" fill="none" className="toolbar-logo-img" aria-label="Laravel Brain">
-              <text x="4" y="40" fontFamily="Space Grotesk, sans-serif" fontWeight="300" fontSize="36" fill="#F2F2F8" fillOpacity="0.65" letterSpacing="0">Laravel</text>
-              <circle cx="138" cy="18" r="3.5" fill="#8B6FE8" opacity="0.45"/>
-              <circle cx="138" cy="28" r="5" fill="#8B6FE8"/>
-              <circle cx="138" cy="38" r="3.5" fill="#8B6FE8" opacity="0.45"/>
-              <line x1="138" y1="21.5" x2="138" y2="23.5" stroke="#8B6FE8" strokeWidth="1" opacity="0.35"/>
-              <line x1="138" y1="33" x2="138" y2="35" stroke="#8B6FE8" strokeWidth="1" opacity="0.35"/>
-              <text x="152" y="40" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="36" fill="#8B6FE8" letterSpacing="0">Brain</text>
-            </svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="260" height="56" viewBox="0 0 260 56" fill="none" className="toolbar-logo-img" aria-label="Laravel Brain">
-              <text x="4" y="40" fontFamily="Space Grotesk, sans-serif" fontWeight="300" fontSize="36" fill="#111218" fillOpacity="0.55" letterSpacing="-1">Laravel</text>
-              <circle cx="138" cy="18" r="3.5" fill="#8B6FE8" opacity="0.45"/>
-              <circle cx="138" cy="28" r="5" fill="#8B6FE8"/>
-              <circle cx="138" cy="38" r="3.5" fill="#8B6FE8" opacity="0.45"/>
-              <line x1="138" y1="21.5" x2="138" y2="23.5" stroke="#8B6FE8" strokeWidth="1" opacity="0.35"/>
-              <line x1="138" y1="33" x2="138" y2="35" stroke="#8B6FE8" strokeWidth="1" opacity="0.35"/>
-              <text x="152" y="40" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="36" fill="#8B6FE8" letterSpacing="-1">Brain</text>
-            </svg>
-          )}
+          <img
+            src={`${import.meta.env.BASE_URL}logo.png`}
+            alt="Laravel Brain"
+            className="toolbar-logo-img"
+            width={38}
+            height={38}
+            decoding="async"
+          />
         </div>
 
         <div className="toolbar-stats">

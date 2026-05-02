@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="art/banner.png" alt="Laravel Brain" />
+  <img src="art/banner.png" alt="Laravel Brain" width="300px"/>
 </p>
 
 <p align="center">
@@ -37,6 +37,7 @@ LaraMint\LaravelBrain is a developer tool that analyzes your Laravel codebase an
 - **Export** — Export any graph as PNG or Mermaid diagram
 - **Multiple layouts** — Hierarchical (dagre), force-directed (cose-bilkent), breadth-first, circle, grid
 - **Watch mode** — Auto-rescans on PHP file changes
+- **Route stress test** — From a selected **route** node, run concurrent HTTP load against that endpoint (via [`laramint/laravel-stress`](https://github.com/LaraMint/laravel-stress)): configure request count, concurrency, headers, and body; see timing percentiles and throughput in the sidebar. While a run is active, the graph highlights the route and animates packets along the request path.
 
 ## Requirements
 
@@ -157,17 +158,22 @@ This produces the full edge list used to build the graph.
 | Export PNG | Toolbar → PNG button |
 | Export Mermaid | Toolbar → Mermaid button |
 | Toggle theme | Toolbar → ☀️ / 🌙 button |
+| Stress test a route | Click a **route** node → open **Stress Test** in the sidebar → set options → **Run** |
 
 ## Routes Registered
 
 The package registers the following routes in your application (all under the `/_laravel-brain` prefix):
 
 ```
-GET /_laravel-brain              → Interactive graph viewer (SPA)
-GET /_laravel-brain/api/source   → Returns PHP source file content
-GET /_laravel-brain/assets/*     → Serves frontend static assets
-GET /_laravel-brain/.graph-*.json → Serves graph data written by the scan
+GET /_laravel-brain                 → Interactive graph viewer (SPA)
+GET /_laravel-brain/api/source      → Returns PHP source file content
+POST /_laravel-brain/api/stress-test        → Starts a stress-test job (or returns sync result)
+GET  /_laravel-brain/api/stress-test/{id}  → Polls background job status/results
+GET /_laravel-brain/assets/*        → Serves frontend static assets
+GET /_laravel-brain/.graph-*.json   → Serves graph data written by the scan
 ```
+
+Stress testing uses [`laramint/laravel-stress`](https://github.com/LaraMint/laravel-stress), which is installed automatically as a dependency of this package. Allowed target hosts are enforced in `src/Http/Controllers/BrainController.php`.
 
 ## Output Files
 
