@@ -32,6 +32,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES))
   const [rankDir, setRankDir] = useState<'LR' | 'TB'>('TB')
+  const [stressTestNodeId, setStressTestNodeId] = useState<string | null>(null)
   const cyRef = useRef<Core | null>(null)
 
   const handleSelectTab = useCallback((tab: TabEntry) => {
@@ -283,7 +284,7 @@ export default function App() {
           </button>
 
           <div className="welcome-hint">
-            Alternatively, run <code>php artisan laravelbrain:scan</code> in your terminal.
+            Alternatively, run <code>php artisan brain:scan</code> in your terminal.
           </div>
         </div>
       </div>
@@ -367,6 +368,7 @@ export default function App() {
               theme={theme}
               onNodeSelect={handleNodeSelect}
               cyRef={cyRef}
+              stressTestNodeId={stressTestNodeId}
             />
           )}
         </div>
@@ -375,6 +377,7 @@ export default function App() {
           graphData={tabState.data}
           theme={theme}
           onClose={() => setSelectedId(null)}
+          onStressChange={setStressTestNodeId}
         />
       </div>
     </div>

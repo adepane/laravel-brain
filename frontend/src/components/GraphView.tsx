@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react' // useCallback used by spawnPacket/spawnChainFromNode
+import { useEffect, useRef, useMemo, useCallback } from 'react'
 import CytoscapeComponent from 'react-cytoscapejs'
 import type { Core, ElementDefinition, NodeSingular, EdgeSingular, Css } from 'cytoscape'
 import cytoscape from 'cytoscape'
@@ -191,6 +191,26 @@ function buildStylesheet(dark: boolean): any[] {
     },
     { selector: 'edge.dimmed', style: { opacity: 0.02 } },
     { selector: 'edge.hidden', style: { display: 'none' } },
+    {
+      selector: 'node.st-path',
+      style: {
+        'border-width': 2.5,
+        'border-color': '#a855f7',
+        'shadow-blur': 18,
+        'shadow-color': '#a855f7',
+        'shadow-opacity': 0.6,
+      } as Css.Node,
+    },
+    {
+      selector: 'edge.st-path',
+      style: {
+        width: 2,
+        'line-color': '#a855f7',
+        'target-arrow-color': '#a855f7',
+        'line-opacity': 0.7,
+        'z-index': 998,
+      } as Css.Edge,
+    },
   ]
 }
 
@@ -224,11 +244,12 @@ interface Props {
   theme: 'dark' | 'light'
   onNodeSelect: (id: string | null) => void
   cyRef: React.MutableRefObject<Core | null>
+  stressTestNodeId?: string | null
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef }: Props) {
+export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef, stressTestNodeId }: Props) {
   const nodeCount = useMemo(() => elements.filter((e) => !e.data?.source).length, [elements])
   const stylesheet = useMemo(() => buildStylesheet(theme === 'dark'), [theme])
   const prevSearch = useRef(searchQuery)
@@ -242,9 +263,6 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
   const packetsRef = useRef<Packet[]>([])
   const sparksRef = useRef<Spark[]>([])
   const lastFrameRef = useRef<number>(0)
-  // Keep nodeCount accessible in stable callbacks (cy event handlers registered once)
-  const nodeCountRef = useRef(nodeCount)
-  useEffect(() => { nodeCountRef.current = nodeCount }, [nodeCount])
   // Cooldown map: nodeId → timestamp of last fire (prevents infinite loop in cyclic graphs)
   const nodeLastFiredRef = useRef<Map<string, number>>(new Map())
 
@@ -298,6 +316,47 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
       spawnPacket(cy, edge.id(), color, delay + i * 60, true)
     })
   }, [spawnPacket])
+
+  // ── Stress-test packet bursts ──────────────────────────────────────────────
+  // Fire purple packets from the active stress-test node every 700ms.
+  // Bypasses cooldown (calls spawnPacket directly) and the PACKET_ANIMATION_THRESHOLD
+  // guard so the animation always plays when a user explicitly triggered a test.
+  // Also highlights the full request path (route → middleware → controller → …).
+  useEffect(() => {
+    const cy = cyRef.current
+    if (!stressTestNodeId || !cy) return
+
+    // BFS from the stressed route node to collect all path nodes/edges, then
+    // add the 'st-path' class so the stylesheet can highlight them.
+    const visited = new Set<string>()
+    const queue = [stressTestNodeId]
+    while (queue.length > 0) {
+      const id = queue.shift()!
+      if (visited.has(id)) continue
+      visited.add(id)
+      cy.getElementById(id).addClass('st-path')
+      cy.getElementById(id).outgoers('edge:visible').forEach((e: EdgeSingular) => {
+        e.addClass('st-path')
+        const tId = e.target().id()
+        if (!visited.has(tId)) queue.push(tId)
+      })
+    }
+
+    const fire = () => {
+      cy.getElementById(stressTestNodeId)
+        .outgoers('edge:visible')
+        .forEach((edge: EdgeSingular, i: number) => {
+          spawnPacket(cy, edge.id(), '#a855f7', i * 80, true)
+        })
+    }
+
+    fire()
+    const id = setInterval(fire, 700)
+    return () => {
+      clearInterval(id)
+      cy.elements().removeClass('st-path')
+    }
+  }, [stressTestNodeId, cyRef, spawnPacket])
 
   // ── Animation loop (single effect, hoisted function avoids self-reference lint error) ──
 
@@ -489,31 +548,6 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
     }
   }, [nodeCount])
 
-  // Auto-start chains — restarts whenever nodeCount changes so the large-graph guard is re-evaluated
-  useEffect(() => {
-    if (nodeCount > PACKET_ANIMATION_THRESHOLD) return
-    let tick = 0
-    const interval = setInterval(() => {
-      const cy = cyRef.current
-      if (!cy) return
-
-      const roots = cy.nodes(':visible').filter((n) => n.incomers('edge:visible').length === 0).toArray()
-
-      if (roots.length === 0) {
-        const all = cy.nodes(':visible').toArray()
-        if (all.length === 0) return
-        const node = all[tick % all.length]
-        spawnChainFromNode(cy, node.id(), ACCENT_COLORS[node.data('type')] || HIGHLIGHT_COLOR)
-      } else {
-        const node = roots[tick % roots.length]
-        spawnChainFromNode(cy, node.id(), ACCENT_COLORS[node.data('type')] || HIGHLIGHT_COLOR)
-      }
-
-      tick++
-    }, 1200)
-    return () => clearInterval(interval)
-  }, [nodeCount, cyRef, spawnChainFromNode])
-
   // Resize canvas to match container
   useEffect(() => {
     const container = containerRef.current
@@ -606,26 +640,12 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
 
           cy.boxSelectionEnabled(false)
 
-          // Node tap: highlight edges + start chain (only on small graphs)
+          // Node tap: highlight edges + select
           cy.on('tap', 'node', (evt) => {
             const node = evt.target
             cy.elements().removeClass('highlighted')
             node.connectedEdges().addClass('highlighted')
             onNodeSelect(node.id())
-
-            if (nodeCountRef.current > PACKET_ANIMATION_THRESHOLD) return
-            const nodeColor = ACCENT_COLORS[node.data('type')] || HIGHLIGHT_COLOR
-            nodeLastFiredRef.current.delete(node.id())
-            spawnChainFromNode(cy, node.id(), nodeColor)
-          })
-
-          // Edge tap: fire a chained packet (only on small graphs)
-          cy.on('tap', 'edge', (evt) => {
-            if (nodeCountRef.current > PACKET_ANIMATION_THRESHOLD) return
-            const edge = evt.target
-            const srcNode = edge.source()
-            const color = ACCENT_COLORS[srcNode.data('type')] || HIGHLIGHT_COLOR
-            spawnPacket(cy, edge.id(), color, 0, true)
           })
 
           cy.on('tap', (evt) => {

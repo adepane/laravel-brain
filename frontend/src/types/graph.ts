@@ -67,3 +67,7 @@ export interface Manifest {
   totalEdges: number
   tabs: TabEntry[]
 }
+
+export interface StressTestConfig { method: string; url: string; count: number; concurrency: number; headers: Record<string, string>; body: string; timeout: number }
+export interface StressTestTiming { min: number; max: number; avg: number; p50: number; p95: number; p99: number }
+export interface StressTestResult { total: number; succeeded: number; failed: number; successRate: number; errorRate: number; throughput: number; timing: StressTestTiming; statusDistribution: Record<string, number>; errors: string[]; wallTimeMs: number }

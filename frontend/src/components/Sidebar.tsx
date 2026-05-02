@@ -4,6 +4,7 @@ import { FlowchartView } from './FlowchartView'
 import { FlowchartModal } from './FlowchartModal'
 import { SourceView } from './SourceView'
 import { SourceModal } from './SourceModal'
+import { StressTestPanel } from './StressTestPanel'
 
 const MIN_WIDTH = 200
 const MAX_WIDTH = 640
@@ -14,6 +15,7 @@ interface Props {
   graphData: GraphData | null
   theme: 'dark' | 'light'
   onClose: () => void
+  onStressChange: (nodeId: string | null) => void
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -30,7 +32,7 @@ const TYPE_COLORS: Record<string, string> = {
   schedule:   '#f97316',
 }
 
-export function Sidebar({ selectedId, graphData, theme, onClose }: Props) {
+export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange }: Props) {
   const [width, setWidth] = useState(DEFAULT_WIDTH)
   const isDragging = useRef(false)
   const startX = useRef(0)
@@ -296,6 +298,17 @@ export function Sidebar({ selectedId, graphData, theme, onClose }: Props) {
             </div>
           ))}
         </div>
+
+        {node.type === 'route' && selectedId && (
+          <StressTestPanel
+            key={selectedId}
+            method={String(node.data?.method ?? 'GET')}
+            uri={String(node.data?.uri ?? '/')}
+            theme={theme}
+            selectedId={selectedId}
+            onStressChange={onStressChange}
+          />
+        )}
 
         {filePath && (
           <div className="sidebar-section sidebar-section--source">
