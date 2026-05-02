@@ -37,6 +37,7 @@ interface RouteCache {
   headersRaw: string
   body: string
   timeout: number
+  jobId: string | null
   savedAt: number
 }
 
@@ -75,7 +76,12 @@ function saveCache(key: string, data: Omit<RouteCache, 'savedAt'>) {
 // Component
 // ---------------------------------------------------------------------------
 export function StressTestPanel({ method, uri, selectedId, onStressChange }: Props) {
-  const [open, setOpen] = useState(false)
+  const currentKey = `${method}::${uri}`
+
+  const [open, setOpen] = useState(() => {
+    const c = loadCache(currentKey)
+    return !!(c?.result || c?.error || c?.jobId)
+  })
 
   // Todo 1: derive base URL from the /_laravel-brain URL path so subdirectory
   // installs (e.g. http://myapp.test/sub/_laravel-brain) also work correctly.
@@ -84,8 +90,6 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
     const idx = href.indexOf('/_laravel-brain')
     return idx !== -1 ? href.slice(0, idx) : window.location.origin
   })
-
-  const currentKey = `${method}::${uri}`
 
   // Todo 2: initialise all state lazily from the cache (memory + localStorage).
   // This correctly handles the remount case where the user visited a non-route
@@ -98,22 +102,89 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
     return cached?.body ?? (BODY_METHODS.has(method.toUpperCase()) ? '{}' : '')
   })
   const [timeout, setTimeout_] = useState(() => loadCache(currentKey)?.timeout ?? 10)
-  const [running, setRunning] = useState(false)
+  const [running, setRunning] = useState(() => {
+    const c = loadCache(currentKey)
+    return !!(c?.jobId && !c?.result)
+  })
+  const [jobId, setJobId] = useState<string | null>(() => loadCache(currentKey)?.jobId ?? null)
   const [result, setResult] = useState<StressTestResult | null>(() => loadCache(currentKey)?.result ?? null)
   const [error, setError] = useState<string | null>(() => loadCache(currentKey)?.error ?? null)
+  const [pollCount, setPollCount] = useState(0)
 
   // AbortController so in-flight requests are cancelled when component unmounts
   const abortRef = useRef<AbortController | null>(null)
 
   // Ref that always holds the latest state — used by the unmount cleanup so the
   // closure doesn't go stale (no need to list state in cleanup deps).
-  const latestRef = useRef({ result, error, count, concurrency, headersRaw, body, timeout, key: currentKey })
+  const latestRef = useRef({ result, error, count, concurrency, headersRaw, body, timeout, jobId, key: currentKey })
+
+  async function pollForResult(jobId: string, signal: AbortSignal) {
+    const MAX_WAIT_S = 180
+    let waited = 0
+
+    while (waited < MAX_WAIT_S) {
+      if (signal.aborted) return
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 1000))
+      waited++
+      setPollCount(waited)
+
+      if (signal.aborted) return
+
+      try {
+        const res = await fetch(`/_laravel-brain/api/stress-test/${jobId}`, { signal })
+        const data = await res.json()
+
+        if (data.status === 'done') {
+          const finalResult = data.result as StressTestResult
+          setResult(finalResult)
+          setJobId(null)
+          saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout, jobId: null })
+          setPollCount(0)
+          return
+        }
+
+        if (data.status === 'error') {
+          setError(data.error ?? 'Unknown error')
+          setJobId(null)
+          saveCache(currentKey, { result: null, error: data.error ?? 'Unknown error', count, concurrency, headersRaw, body, timeout, jobId: null })
+          setPollCount(0)
+          return
+        }
+
+        // status === 'running' → keep polling
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return
+        // Network hiccup during poll — retry next cycle
+      }
+    }
+
+    setPollCount(0)
+    setJobId(null)
+    saveCache(currentKey, { result: null, error: 'Stress test timed out after 3 minutes', count, concurrency, headersRaw, body, timeout, jobId: null })
+    setError('Stress test timed out after 3 minutes')
+  }
 
   // Keep latestRef in sync after every render (must be declared before the
   // unmount effect so it runs first and the cleanup reads fresh values).
   useEffect(() => {
-    latestRef.current = { result, error, count, concurrency, headersRaw, body, timeout, key: currentKey }
+    latestRef.current = { result, error, count, concurrency, headersRaw, body, timeout, jobId, key: currentKey }
   })
+
+  // Resume polling if a jobId was cached (e.g. panel was closed mid-run)
+  useEffect(() => {
+    const cached = loadCache(currentKey)
+    if (cached?.jobId && !cached?.result) {
+      onStressChange(selectedId)
+      abortRef.current = new AbortController()
+      pollForResult(cached.jobId, abortRef.current.signal).finally(() => {
+        setRunning(false)
+        setPollCount(0)
+        onStressChange(null)
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Save state to cache + localStorage on unmount
   useEffect(() => {
@@ -124,6 +195,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
         result: s.result, error: s.error,
         count: s.count, concurrency: s.concurrency,
         headersRaw: s.headersRaw, body: s.body, timeout: s.timeout,
+        jobId: s.jobId,
       })
     }
   }, [])
@@ -179,6 +251,8 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
 
       // Background job — server freed its thread immediately; poll for results
       if (data.jobId) {
+        setJobId(data.jobId)
+        saveCache(currentKey, { result: null, error: null, count, concurrency, headersRaw, body, timeout, jobId: data.jobId })
         await pollForResult(data.jobId, signal)
         return
       }
@@ -186,7 +260,8 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
       // Synchronous result (multi-threaded server fallback)
       const finalResult = data as StressTestResult
       setResult(finalResult)
-      saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout })
+      setJobId(null)
+      saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout, jobId: null })
 
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
@@ -197,50 +272,6 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
       setPollCount(0)
       onStressChange(null)
     }
-  }
-
-  const [pollCount, setPollCount] = useState(0)
-
-  async function pollForResult(jobId: string, signal: AbortSignal) {
-    const MAX_WAIT_S = 180
-    let waited = 0
-
-    while (waited < MAX_WAIT_S) {
-      if (signal.aborted) return
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 1000))
-      waited++
-      setPollCount(waited)
-
-      if (signal.aborted) return
-
-      try {
-        const res = await fetch(`/_laravel-brain/api/stress-test/${jobId}`, { signal })
-        const data = await res.json()
-
-        if (data.status === 'done') {
-          const finalResult = data.result as StressTestResult
-          setResult(finalResult)
-          saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout })
-          setPollCount(0)
-          return
-        }
-
-        if (data.status === 'error') {
-          setError(data.error ?? 'Unknown error')
-          setPollCount(0)
-          return
-        }
-
-        // status === 'running' → keep polling
-      } catch (e) {
-        if ((e as Error).name === 'AbortError') return
-        // Network hiccup during poll — retry next cycle
-      }
-    }
-
-    setPollCount(0)
-    setError('Stress test timed out after 3 minutes')
   }
 
   const metrics = result
