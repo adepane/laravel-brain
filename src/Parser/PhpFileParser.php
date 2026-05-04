@@ -48,7 +48,7 @@ class PhpFileParser
         {
             public array $useMap = [];
 
-            public function enterNode(Node $node): null
+            public function enterNode(Node $node): int|null
             {
                 if ($node instanceof Node\Stmt\Use_) {
                     foreach ($node->uses as $use) {

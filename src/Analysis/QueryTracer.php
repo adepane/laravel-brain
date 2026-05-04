@@ -304,7 +304,7 @@ class DbFacadeVisitor extends NodeVisitorAbstract
         $this->useMap = $useMap;
     }
 
-    public function enterNode(Node $node): null
+    public function enterNode(Node $node): int|null
     {
         if ($node instanceof Node\Expr\StaticCall) {
             $this->handleStaticCall($node);

@@ -10,6 +10,7 @@ interface Props {
 }
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH'])
+const CSRF_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 function statusColor(code: string): string {
   const n = parseInt(code, 10)
@@ -39,6 +40,9 @@ interface RouteCache {
   timeout: number
   jobId: string | null
   savedAt: number
+  routeParams: Record<string, string>
+  includeCsrf: boolean
+  sendAsFormData: boolean
 }
 
 const routeCache = new Map<string, RouteCache>()
@@ -70,13 +74,50 @@ function saveCache(key: string, data: Omit<RouteCache, 'savedAt'>) {
 }
 
 // ---------------------------------------------------------------------------
-// Request path trace — BFS from route node through the graph
+// Route parameter helpers
 // ---------------------------------------------------------------------------
+function extractParams(uri: string): Array<{ name: string; optional: boolean }> {
+  const seen = new Set<string>()
+  const result: Array<{ name: string; optional: boolean }> = []
+  for (const m of uri.matchAll(/\{([^}?]+)(\?)?\}/g)) {
+    if (!seen.has(m[1])) {
+      result.push({ name: m[1], optional: !!m[2] })
+      seen.add(m[1])
+    }
+  }
+  return result
+}
+
+function buildUri(uri: string, params: Record<string, string>): string {
+  let result = uri
+  result = result.replace(/\/\{([^}?]+)\?\}/g, (_, name) => {
+    const val = params[name]?.trim()
+    return val ? '/' + encodeURIComponent(val) : ''
+  })
+  result = result.replace(/\{([^}?]+)\}/g, (_, name) => {
+    return encodeURIComponent(params[name]?.trim() ?? '')
+  })
+  return result || '/'
+}
+
+function jsonToFormEncoded(jsonStr: string): string | null {
+  try {
+    const obj = JSON.parse(jsonStr)
+    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return null
+    return Object.entries(obj)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join('&')
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export function StressTestPanel({ method, uri, selectedId, onStressChange }: Props) {
   const currentKey = `${method}::${uri}`
+  const uriParams = extractParams(uri)
 
   const [open, setOpen] = useState(() => {
     const c = loadCache(currentKey)
@@ -109,6 +150,15 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
   const [jobId, setJobId] = useState<string | null>(() => loadCache(currentKey)?.jobId ?? null)
   const [result, setResult] = useState<StressTestResult | null>(() => loadCache(currentKey)?.result ?? null)
   const [error, setError] = useState<string | null>(() => loadCache(currentKey)?.error ?? null)
+  const [routeParams, setRouteParams] = useState<Record<string, string>>(
+    () => loadCache(currentKey)?.routeParams ?? {}
+  )
+  const [includeCsrf, setIncludeCsrf] = useState<boolean>(
+    () => loadCache(currentKey)?.includeCsrf ?? CSRF_METHODS.has(method.toUpperCase())
+  )
+  const [sendAsFormData, setSendAsFormData] = useState<boolean>(
+    () => loadCache(currentKey)?.sendAsFormData ?? CSRF_METHODS.has(method.toUpperCase())
+  )
   const [pollCount, setPollCount] = useState(0)
 
   // AbortController so in-flight requests are cancelled when component unmounts
@@ -116,7 +166,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
 
   // Ref that always holds the latest state — used by the unmount cleanup so the
   // closure doesn't go stale (no need to list state in cleanup deps).
-  const latestRef = useRef({ result, error, count, concurrency, headersRaw, body, timeout, jobId, key: currentKey })
+  const latestRef = useRef({ result, error, count, concurrency, headersRaw, body, timeout, jobId, routeParams, includeCsrf, sendAsFormData, key: currentKey })
 
   async function pollForResult(jobId: string, signal: AbortSignal) {
     const MAX_WAIT_S = 180
@@ -139,7 +189,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
           const finalResult = data.result as StressTestResult
           setResult(finalResult)
           setJobId(null)
-          saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout, jobId: null })
+          saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout, jobId: null, routeParams, includeCsrf, sendAsFormData })
           setPollCount(0)
           return
         }
@@ -147,7 +197,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
         if (data.status === 'error') {
           setError(data.error ?? 'Unknown error')
           setJobId(null)
-          saveCache(currentKey, { result: null, error: data.error ?? 'Unknown error', count, concurrency, headersRaw, body, timeout, jobId: null })
+          saveCache(currentKey, { result: null, error: data.error ?? 'Unknown error', count, concurrency, headersRaw, body, timeout, jobId: null, routeParams, includeCsrf, sendAsFormData })
           setPollCount(0)
           return
         }
@@ -161,14 +211,14 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
 
     setPollCount(0)
     setJobId(null)
-    saveCache(currentKey, { result: null, error: 'Stress test timed out after 3 minutes', count, concurrency, headersRaw, body, timeout, jobId: null })
+    saveCache(currentKey, { result: null, error: 'Stress test timed out after 3 minutes', count, concurrency, headersRaw, body, timeout, jobId: null, routeParams, includeCsrf, sendAsFormData })
     setError('Stress test timed out after 3 minutes')
   }
 
   // Keep latestRef in sync after every render (must be declared before the
   // unmount effect so it runs first and the cleanup reads fresh values).
   useEffect(() => {
-    latestRef.current = { result, error, count, concurrency, headersRaw, body, timeout, jobId, key: currentKey }
+    latestRef.current = { result, error, count, concurrency, headersRaw, body, timeout, jobId, routeParams, includeCsrf, sendAsFormData, key: currentKey }
   })
 
   // Resume polling if a jobId was cached (e.g. panel was closed mid-run)
@@ -195,7 +245,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
         result: s.result, error: s.error,
         count: s.count, concurrency: s.concurrency,
         headersRaw: s.headersRaw, body: s.body, timeout: s.timeout,
-        jobId: s.jobId,
+        jobId: s.jobId, routeParams: s.routeParams, includeCsrf: s.includeCsrf, sendAsFormData: s.sendAsFormData,
       })
     }
   }, [])
@@ -217,14 +267,36 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
   }
 
   async function handleRun() {
+    const missingRequired = uriParams.filter((p) => !p.optional && !routeParams[p.name]?.trim())
+    if (missingRequired.length > 0) {
+      setError(`Required route param${missingRequired.length > 1 ? 's' : ''} missing: ${missingRequired.map((p) => p.name).join(', ')}`)
+      return
+    }
+
     setRunning(true)
     setResult(null)
     setError(null)
     onStressChange(selectedId)
 
-    const url = baseUrl.replace(/\/$/, '') + '/' + uri.replace(/^\//, '')
+    const resolvedUri = buildUri(uri, routeParams)
+    const url = baseUrl.replace(/\/$/, '') + '/' + resolvedUri.replace(/^\//, '')
     abortRef.current = new AbortController()
     const signal = abortRef.current.signal
+
+    const extraHeaders: Record<string, string> = {}
+    let resolvedBody: string | null = body || null
+
+    const useFormData = BODY_METHODS.has(method.toUpperCase()) && sendAsFormData
+    if (useFormData && body) {
+      const encoded = jsonToFormEncoded(body)
+      if (encoded !== null) {
+        resolvedBody = encoded
+        extraHeaders['Content-Type'] = 'application/x-www-form-urlencoded'
+      }
+    }
+
+    // User-supplied headers override the auto-injected Content-Type
+    const mergedHeaders = { ...extraHeaders, ...parseHeaders(headersRaw) }
 
     try {
       const res = await fetch('/_laravel-brain/api/stress-test', {
@@ -236,9 +308,10 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
           url,
           count,
           concurrency,
-          headers: parseHeaders(headersRaw),
-          body: body || null,
+          headers: mergedHeaders,
+          body: resolvedBody,
           timeout,
+          includeCsrf: CSRF_METHODS.has(method.toUpperCase()) ? includeCsrf : false,
         }),
       })
 
@@ -252,7 +325,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
       // Background job — server freed its thread immediately; poll for results
       if (data.jobId) {
         setJobId(data.jobId)
-        saveCache(currentKey, { result: null, error: null, count, concurrency, headersRaw, body, timeout, jobId: data.jobId })
+        saveCache(currentKey, { result: null, error: null, count, concurrency, headersRaw, body, timeout, jobId: data.jobId, routeParams, includeCsrf, sendAsFormData })
         await pollForResult(data.jobId, signal)
         return
       }
@@ -261,7 +334,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
       const finalResult = data as StressTestResult
       setResult(finalResult)
       setJobId(null)
-      saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout, jobId: null })
+      saveCache(currentKey, { result: finalResult, error: null, count, concurrency, headersRaw, body, timeout, jobId: null, routeParams, includeCsrf, sendAsFormData })
 
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
@@ -319,9 +392,31 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
               <span className="st-label">Target</span>
               <span className="st-uri-preview">
                 <span className="st-method-badge">{method.toUpperCase()}</span>
-                {uri}
+                {uriParams.length > 0 ? buildUri(uri, routeParams) : uri}
               </span>
             </div>
+
+            {uriParams.length > 0 && (
+              <div className="st-form-col">
+                <span className="st-label">Route Params</span>
+                {uriParams.map(({ name, optional }) => (
+                  <div key={name} className="st-form-row" style={{ marginTop: 4 }}>
+                    <span className="st-label" style={{ minWidth: 80 }}>
+                      {name}{optional ? ' (opt)' : ''}
+                    </span>
+                    <input
+                      className="st-input"
+                      type="text"
+                      placeholder={optional ? 'optional' : 'required'}
+                      value={routeParams[name] ?? ''}
+                      onChange={(e) =>
+                        setRouteParams((prev) => ({ ...prev, [name]: e.target.value }))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="st-form-row">
               <span className="st-label">Requests</span>
@@ -356,6 +451,34 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
               />
             </div>
 
+            {CSRF_METHODS.has(method.toUpperCase()) && (
+              <div className="st-form-row">
+                <span className="st-label">CSRF Token</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={includeCsrf}
+                    onChange={(e) => setIncludeCsrf(e.target.checked)}
+                  />
+                  Auto-inject from session
+                </label>
+              </div>
+            )}
+
+            {BODY_METHODS.has(method.toUpperCase()) && (
+              <div className="st-form-row">
+                <span className="st-label">Body Format</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={sendAsFormData}
+                    onChange={(e) => setSendAsFormData(e.target.checked)}
+                  />
+                  Form data (application/x-www-form-urlencoded)
+                </label>
+              </div>
+            )}
+
             <div className="st-form-col">
               <span className="st-label">Headers</span>
               <textarea
@@ -369,7 +492,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
 
             {BODY_METHODS.has(method.toUpperCase()) && (
               <div className="st-form-col">
-                <span className="st-label">Body (JSON)</span>
+                <span className="st-label">{sendAsFormData ? 'Body (JSON → form)' : 'Body (JSON)'}</span>
                 <textarea
                   className="st-textarea"
                   rows={4}

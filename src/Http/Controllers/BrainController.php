@@ -176,13 +176,14 @@ class BrainController extends Controller
         set_time_limit(120);
 
         $validated = $request->validate([
-            'method' => 'required|in:GET,POST,PUT,PATCH,DELETE,HEAD',
-            'url' => 'required|url',
-            'count' => 'required|integer|min:1|max:200',
+            'method'      => 'required|in:GET,POST,PUT,PATCH,DELETE,HEAD',
+            'url'         => 'required|url',
+            'count'       => 'required|integer|min:1|max:200',
             'concurrency' => 'required|integer|min:1|max:20',
-            'headers' => 'nullable|array',
-            'body' => 'nullable|string',
-            'timeout' => 'nullable|numeric|min:1|max:30',
+            'headers'     => 'nullable|array',
+            'body'        => 'nullable|string',
+            'timeout'     => 'nullable|numeric|min:1|max:30',
+            'includeCsrf' => 'nullable|boolean',
         ]);
 
         if (! $this->isAllowedHost($validated['url'])) {
@@ -190,6 +191,34 @@ class BrainController extends Controller
                 ['error' => 'URL restricted to localhost, 127.0.0.1, *.test, or *.local'],
                 422
             );
+        }
+
+        if ($validated['includeCsrf'] ?? false) {
+            $headers = $validated['headers'] ?? [];
+            $cookieHeader = $request->header('Cookie', '');
+
+            if (! isset($headers['X-CSRF-TOKEN']) && ! isset($headers['X-XSRF-TOKEN'])) {
+                // The brain routes have no session middleware, so csrf_token() would
+                // return a token for a different session than the browser's.
+                // Instead, extract the XSRF-TOKEN cookie the browser already holds —
+                // it contains the encrypted CSRF token Laravel set for this session.
+                // Sending it as X-XSRF-TOKEN lets Laravel decrypt and verify it normally.
+                foreach (explode(';', $cookieHeader) as $part) {
+                    $part = trim($part);
+                    if (str_starts_with($part, 'XSRF-TOKEN=')) {
+                        $headers['X-XSRF-TOKEN'] = urldecode(substr($part, strlen('XSRF-TOKEN=')));
+                        break;
+                    }
+                }
+            }
+
+            // Forward the full Cookie header so the session can be loaded and
+            // the CSRF token verified against it.
+            if (! isset($headers['Cookie']) && $cookieHeader !== '') {
+                $headers['Cookie'] = $cookieHeader;
+            }
+
+            $validated['headers'] = $headers;
         }
 
         try {

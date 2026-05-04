@@ -77,7 +77,7 @@ class ChannelAnalyzer
                 private array $useMap,
             ) {}
 
-            public function enterNode(Node $node): null
+            public function enterNode(Node $node): int|null
             {
                 // Broadcast::channel('name', SomeClass::class)
                 // Broadcast::channel('name', function ($user) { ... })

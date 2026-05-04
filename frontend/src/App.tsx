@@ -33,6 +33,7 @@ export default function App() {
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES))
   const [rankDir, setRankDir] = useState<'LR' | 'TB'>('TB')
   const [stressTestNodeId, setStressTestNodeId] = useState<string | null>(null)
+  const [stressRunKey, setStressRunKey] = useState(0)
   const cyRef = useRef<Core | null>(null)
 
   const handleSelectTab = useCallback((tab: TabEntry) => {
@@ -350,6 +351,7 @@ export default function App() {
               onNodeSelect={handleNodeSelect}
               cyRef={cyRef}
               stressTestNodeId={stressTestNodeId}
+              stressRunKey={stressRunKey}
               complexityOverlay={complexityOverlay}
             />
           )}
@@ -359,7 +361,10 @@ export default function App() {
           graphData={tabState.data}
           theme={theme}
           onClose={() => setSelectedId(null)}
-          onStressChange={setStressTestNodeId}
+          onStressChange={(nodeId) => {
+            setStressTestNodeId(nodeId)
+            if (nodeId !== null) setStressRunKey((k) => k + 1)
+          }}
         />
       </div>
     </div>
