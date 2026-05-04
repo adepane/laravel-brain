@@ -65,6 +65,7 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
   }, [width])
 
   const [sourceOpen, setSourceOpen] = useState(false)
+  const [flowOpen, setFlowOpen] = useState(false)
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false)
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
 
@@ -73,6 +74,7 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
   if (selectedId !== prevSelectedId) {
     setPrevSelectedId(selectedId)
     setSourceOpen(false)
+    setFlowOpen(false)
     setIsFlowModalOpen(false)
     setIsSourceModalOpen(false)
   }
@@ -238,24 +240,28 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
         {/* Flowchart — shown first for action/service/repository nodes */}
         {flowSteps.length > 0 && (
           <div className="sidebar-section sidebar-section--flowchart">
-            <div className="flow-header-wrapper">
-              <h3>Method Flow</h3>
-              <button 
-                className="flow-popup-btn" 
+            <div className="source-toggle-wrapper">
+              <div className="source-toggle" onClick={() => setFlowOpen((o) => !o)}>
+                <h3>Method Flow</h3>
+                <span className={`source-toggle-icon${flowOpen ? ' source-toggle-icon--open' : ''}`} />
+              </div>
+              <button
+                className="flow-popup-btn"
                 title="Open in large view"
                 onClick={() => setIsFlowModalOpen(true)}
               >
                 ⤢
               </button>
             </div>
-            <FlowchartView steps={flowSteps} isFatMethod={fatMethod} />
-            
+
+            {flowOpen && <FlowchartView steps={flowSteps} isFatMethod={fatMethod} />}
+
             {isFlowModalOpen && (
-              <FlowchartModal 
-                steps={flowSteps} 
-                title={node.label} 
-                isFatMethod={fatMethod} 
-                onClose={() => setIsFlowModalOpen(false)} 
+              <FlowchartModal
+                steps={flowSteps}
+                title={node.label}
+                isFatMethod={fatMethod}
+                onClose={() => setIsFlowModalOpen(false)}
               />
             )}
           </div>
@@ -315,7 +321,7 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
             <div className="source-toggle-wrapper">
               <div className="source-toggle" onClick={() => setSourceOpen((o) => !o)}>
                 <h3>Source Code</h3>
-                <span className="source-toggle-icon">{sourceOpen ? '▲' : '▼'}</span>
+                <span className={`source-toggle-icon${sourceOpen ? ' source-toggle-icon--open' : ''}`} />
               </div>
               <button 
                 className="flow-popup-btn" 

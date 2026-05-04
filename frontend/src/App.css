@@ -995,7 +995,22 @@ body {
 }
 
 .source-toggle:hover h3 { color: var(--text); }
-.source-toggle-icon { font-size: 10px; color: var(--text-dim); }
+.source-toggle h3 { margin: 0; }
+.source-toggle-icon {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-dim);
+  border-bottom: 1.5px solid var(--text-dim);
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  align-self: center;
+  margin-top: -3px;
+}
+.source-toggle-icon--open {
+  transform: rotate(-135deg);
+  margin-top: 1px;
+}
 
 .source-view {
   border: 1px solid var(--border);
