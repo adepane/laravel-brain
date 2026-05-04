@@ -231,35 +231,7 @@ export default function App() {
       <div className="error-screen welcome-screen">
         <div className="welcome-card">
           <div className="welcome-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180" fill="none">
-              <rect width="180" height="180" fill="#111218" rx="28"/>
-              <g transform="translate(18,18) scale(2.0)">
-                <circle cx="36" cy="36" r="30" fill="#8B6FE8" opacity="0.14"/>
-                <line x1="14" y1="16" x2="8" y2="30" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="8" y1="30" x2="18" y2="44" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="14" y1="16" x2="28" y2="26" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="8" y1="30" x2="28" y2="26" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="18" y1="44" x2="28" y2="26" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="28" y1="26" x2="36" y2="36" stroke="#8B6FE8" strokeWidth="1.3" opacity="0.7"/>
-                <line x1="28" y1="26" x2="44" y2="26" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="36" y1="36" x2="44" y2="26" stroke="#8B6FE8" strokeWidth="1.3" opacity="0.7"/>
-                <line x1="36" y1="36" x2="54" y2="44" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="44" y1="26" x2="58" y2="16" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="44" y1="26" x2="64" y2="30" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="58" y1="16" x2="64" y2="30" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="64" y1="30" x2="54" y2="44" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <line x1="54" y1="44" x2="28" y2="26" stroke="#8B6FE8" strokeWidth="0.9" opacity="0.35"/>
-                <circle cx="14" cy="16" r="2.2" fill="#8B6FE8" opacity="0.55"/>
-                <circle cx="8" cy="30" r="2.2" fill="#8B6FE8" opacity="0.55"/>
-                <circle cx="18" cy="44" r="2.2" fill="#8B6FE8" opacity="0.55"/>
-                <circle cx="28" cy="26" r="3.5" fill="#8B6FE8" opacity="0.85"/>
-                <circle cx="36" cy="36" r="5" fill="#8B6FE8" opacity="1"/>
-                <circle cx="44" cy="26" r="3.5" fill="#8B6FE8" opacity="0.85"/>
-                <circle cx="58" cy="16" r="2.2" fill="#8B6FE8" opacity="0.55"/>
-                <circle cx="64" cy="30" r="2.2" fill="#8B6FE8" opacity="0.55"/>
-                <circle cx="54" cy="44" r="2.2" fill="#8B6FE8" opacity="0.55"/>
-              </g>
-            </svg>
+            <img src="/_laravel-brain/logo.png" alt="Laravel Brain" />
           </div>
           <h2>Welcome to Laravel Brain</h2>
           <p>No project analysis found. To begin exploring your code architecture, please run an initial scan.</p>

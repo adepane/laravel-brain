@@ -1128,7 +1128,7 @@ body {
   filter: drop-shadow(0 0 20px rgba(124, 58, 237, 0.4));
 }
 
-.welcome-icon svg {
+.welcome-icon img {
   width: clamp(80px, 30vw, 140px);
   height: auto;
 }
