@@ -38,6 +38,8 @@ LaraMint\LaravelBrain is a developer tool that analyzes your Laravel codebase an
 - **Multiple layouts** — Hierarchical (dagre), force-directed (cose-bilkent), breadth-first, circle, grid
 - **Watch mode** — Auto-rescans on PHP file changes
 - **Route stress test** — From a selected **route** node, run concurrent HTTP load against that endpoint (via [`laramint/laravel-stress`](https://github.com/LaraMint/laravel-stress)): configure request count, concurrency, headers, and body; see timing percentiles and throughput in the sidebar. While a run is active, the graph highlights the route and animates packets along the request path.
+- **AI context export** — Copy a deterministic, token-optimized context snapshot for any node to your clipboard with one click (🤖 button in the sidebar). Also available as `brain:export-context` Artisan command and `GET /_laravel-brain/api/context` API endpoint. Context includes call chain, complexity hotspots, DB operations, source snippets, and all backend/frontend packages — always reproducible from the same scan data.
+- **AI rules generation** — Generate ready-to-use context files for seven AI coding assistants (Claude Code, Cursor, Windsurf, GitHub Copilot, JetBrains Junie, Aider, AGENTS.md) directly from the UI (**Export → Generate AI Rules**) or via `brain:generate-rules`. Each file is populated with your project's real architecture, routes, packages, and code-health data.
 
 ## Requirements
 
@@ -73,6 +75,86 @@ This analyzes your entire codebase and writes the graph data to `storage/app/lar
 
   Done! Open the viewer at: http://localhost:8000/_laravel-brain
 ```
+
+### Export AI context for a node
+
+Click the **🤖** button in the node sidebar to copy a structured Markdown context block to your clipboard, ready to paste into Claude, ChatGPT, or any LLM.
+
+The context is **deterministic**: same scan + same node = identical output every time. It uses BFS up to depth 3 from the selected node and enforces a token budget (default 6 000 tokens), truncating only source snippets once structural metadata is fully included.
+
+You can also run it from the terminal:
+
+```bash
+# Full project summary
+php artisan brain:export-context
+
+# Focused on a specific route
+php artisan brain:export-context --route="GET /users" --budget=4000
+
+# Target a specific node ID
+php artisan brain:export-context --node="action::App\Http\Controllers\UserController::index"
+
+# Write to a file instead of stdout
+php artisan brain:export-context --route="GET /api/orders" --output=/tmp/context.md
+
+# JSON format
+php artisan brain:export-context --format=json
+```
+
+Or via the API:
+
+```
+GET /_laravel-brain/api/context?nodeId=<id>&budget=6000
+GET /_laravel-brain/api/context?route=GET+/users&format=json
+```
+
+The exported Markdown contains:
+
+- **Route** — method, URI, middleware
+- **Call chain** — `Route → Controller → Service → Model` (depth ≤ 3)
+- **Complexity hotspots** — cyclomatic complexity + line count table
+- **Database operations** — Eloquent and raw queries per node
+- **Source snippets** — focal node first, truncated to fit the token budget
+- **Backend packages** — all `composer.json` dependencies with versions, dev flag
+- **Frontend packages** — all `package.json` dependencies with versions, dev flag
+
+---
+
+### Generate AI assistant rules files
+
+Populate context files for your AI coding tools directly from the scan data.
+
+**From the UI:** Toolbar → **Export** → **Generate AI Rules** → select targets → **Generate**.
+
+**From the terminal:**
+
+```bash
+# Generate all 7 files at once
+php artisan brain:generate-rules
+
+# Specific targets only
+php artisan brain:generate-rules --target=claude --target=cursor
+
+# Preview paths without writing anything
+php artisan brain:generate-rules --dry-run
+
+# Overwrite existing files without prompting
+php artisan brain:generate-rules --force
+```
+
+| Target | File written | Used by |
+|--------|-------------|---------|
+| `claude` | `CLAUDE.md` | Claude Code CLI & IDE extension |
+| `cursor` | `.cursor/rules/laravel-brain.mdc` | Cursor (MDC format with frontmatter) |
+| `windsurf` | `.windsurf/rules/laravel-brain.md` | Windsurf by Codeium |
+| `copilot` | `.github/copilot-instructions.md` | GitHub Copilot (applied repo-wide) |
+| `junie` | `.junie/guidelines.md` | JetBrains AI / Junie |
+| `aider` | `CONVENTIONS.md` | Aider (`aider --read CONVENTIONS.md`) |
+| `agents` | `AGENTS.md` | Universal open standard — 60+ tools |
+
+Each generated file contains your project's tech stack, architecture counts, top routes, complexity hotspots, detected code smells, and full package lists. Re-run after every scan to keep the files current.
+
+---
 
 ### Watch mode
 
@@ -155,9 +237,11 @@ This produces the full edge list used to build the graph.
 | Flowchart Popup | Click ⤢ in flow section to open large view |
 | Filter by type | Filter panel on the left |
 | Fit all nodes | Toolbar → Fit button |
-| Export PNG | Toolbar → PNG button |
-| Export Mermaid | Toolbar → Mermaid button |
+| Export PNG | Toolbar → Export → Download PNG |
+| Export Mermaid | Toolbar → Export → Copy Mermaid Code |
+| Generate AI rules | Toolbar → Export → Generate AI Rules |
 | Toggle theme | Toolbar → ☀️ / 🌙 button |
+| Copy AI context | Click any node → 🤖 button in sidebar header |
 | Stress test a route | Click a **route** node → open **Stress Test** in the sidebar → set options → **Run** |
 
 ## Routes Registered
@@ -165,12 +249,15 @@ This produces the full edge list used to build the graph.
 The package registers the following routes in your application (all under the `/_laravel-brain` prefix):
 
 ```
-GET /_laravel-brain                 → Interactive graph viewer (SPA)
-GET /_laravel-brain/api/source      → Returns PHP source file content
-POST /_laravel-brain/api/stress-test        → Starts a stress-test job (or returns sync result)
-GET  /_laravel-brain/api/stress-test/{id}  → Polls background job status/results
-GET /_laravel-brain/assets/*        → Serves frontend static assets
-GET /_laravel-brain/.graph-*.json   → Serves graph data written by the scan
+GET  /_laravel-brain                          → Interactive graph viewer (SPA)
+GET  /_laravel-brain/api/source               → Returns PHP source file content
+POST /_laravel-brain/api/scan                 → Triggers a full project scan
+GET  /_laravel-brain/api/context              → Exports a deterministic AI context snapshot
+POST /_laravel-brain/api/generate-rules       → Generates AI assistant rules files
+POST /_laravel-brain/api/stress-test          → Starts a stress-test job (or returns sync result)
+GET  /_laravel-brain/api/stress-test/{id}     → Polls background job status/results
+GET  /_laravel-brain/assets/*                 → Serves frontend static assets
+GET  /_laravel-brain/.graph-*.json            → Serves graph data written by the scan
 ```
 
 Stress testing uses [`laramint/laravel-stress`](https://github.com/LaraMint/laravel-stress), which is installed automatically as a dependency of this package. Allowed target hosts are enforced in `src/Http/Controllers/BrainController.php`.
