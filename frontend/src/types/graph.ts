@@ -21,6 +21,13 @@ export interface GraphMeta {
   edgeCount: number
 }
 
+export interface GraphNodeMetrics {
+  lineCount: number
+  cyclomaticComplexity: number
+  statementCount: number
+  paramCount: number
+}
+
 export interface GraphNode {
   id: string
   type: 'route' | 'middleware' | 'controller' | 'action' | 'service' | 'model' | 'event' | 'job' | 'command' | 'channel' | 'schedule'
@@ -66,6 +73,26 @@ export interface Manifest {
   totalNodes: number
   totalEdges: number
   tabs: TabEntry[]
+}
+
+export interface SequenceActor {
+  id: string
+  label: string
+  type: string
+  color: string
+}
+
+export interface SequenceMessage {
+  fromIndex: number
+  toIndex: number
+  label: string
+  isReturn?: boolean
+  isAsync?: boolean
+}
+
+export interface SequenceDiagram {
+  actors: SequenceActor[]
+  messages: SequenceMessage[]
 }
 
 export interface StressTestConfig { method: string; url: string; count: number; concurrency: number; headers: Record<string, string>; body: string; timeout: number }

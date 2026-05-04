@@ -5,6 +5,9 @@ import { FlowchartModal } from './FlowchartModal'
 import { SourceView } from './SourceView'
 import { SourceModal } from './SourceModal'
 import { StressTestPanel } from './StressTestPanel'
+import { SequenceDiagramView } from './SequenceDiagramView'
+import { SequenceDiagramModal } from './SequenceDiagramModal'
+import { buildSequenceDiagram } from '../utils/sequenceUtils'
 
 const MIN_WIDTH = 200
 const MAX_WIDTH = 640
@@ -68,6 +71,8 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
   const [flowOpen, setFlowOpen] = useState(false)
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false)
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
+  const [seqOpen, setSeqOpen] = useState(false)
+  const [isSeqModalOpen, setIsSeqModalOpen] = useState(false)
 
   // Adjust state during render when selection changes (avoids Effect cascading render)
   const [prevSelectedId, setPrevSelectedId] = useState(selectedId)
@@ -77,6 +82,8 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
     setFlowOpen(false)
     setIsFlowModalOpen(false)
     setIsSourceModalOpen(false)
+    setSeqOpen(false)
+    setIsSeqModalOpen(false)
   }
 
   const nodeMap = useMemo(() => {
@@ -106,6 +113,13 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
     })
     return map
   }, [graphData])
+
+  const sequenceDiagram = useMemo(() => {
+    if (!graphData || !selectedId) return null
+    const node = graphData.nodes.find(n => n.id === selectedId)
+    if (node?.type !== 'route') return null
+    return buildSequenceDiagram(selectedId, graphData)
+  }, [selectedId, graphData])
 
   if (!graphData) return null
 
@@ -262,6 +276,42 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
                 title={node.label}
                 isFatMethod={fatMethod}
                 onClose={() => setIsFlowModalOpen(false)}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Sequence Diagram — only for route nodes */}
+        {sequenceDiagram && (
+          <div className="sidebar-section sidebar-section--sequence">
+            <div className="source-toggle-wrapper">
+              <div className="source-toggle" onClick={() => setSeqOpen((o) => !o)}>
+                <h3>Sequence Diagram</h3>
+                <span className={`source-toggle-icon${seqOpen ? ' source-toggle-icon--open' : ''}`} />
+              </div>
+              <button
+                className="flow-popup-btn"
+                title="Open in large view"
+                onClick={() => setIsSeqModalOpen(true)}
+              >
+                ⤢
+              </button>
+            </div>
+
+            {seqOpen && (
+              <SequenceDiagramView
+                diagram={sequenceDiagram}
+                title={node.label}
+                theme={theme}
+              />
+            )}
+
+            {isSeqModalOpen && (
+              <SequenceDiagramModal
+                diagram={sequenceDiagram}
+                title={node.label}
+                theme={theme}
+                onClose={() => setIsSeqModalOpen(false)}
               />
             )}
           </div>

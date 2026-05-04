@@ -200,3 +200,22 @@
   border-bottom-color: rgba(255, 109, 0, 0.3);
   color: #E65100;
 }
+
+/* ── Sequence Diagram ──────────────────────────────── */
+.seq-diagram-root {
+  overflow-x: auto;
+  padding: 6px 0 10px;
+}
+
+.seq-diagram-svg {
+  display: block;
+}
+
+.sequence-modal-body {
+  padding: 0;
+  overflow: auto;
+}
+
+.sequence-modal-body .seq-diagram-root {
+  padding: 16px;
+}

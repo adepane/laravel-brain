@@ -20,6 +20,8 @@ interface Props {
   onSearch: (query: string) => void
   onToggleTheme: () => void
   cyRef: React.MutableRefObject<Core | null>
+  complexityOverlay: boolean
+  onToggleComplexityOverlay: () => void
 }
 
 function formatAge(ms: number): string {
@@ -69,7 +71,7 @@ function ActionDropdown({ label, icon, children }: { label: string, icon: React.
   )
 }
 
-export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, cyRef }: Props) {
+export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, cyRef, complexityOverlay, onToggleComplexityOverlay }: Props) {
   const [searchValue, setSearchValue] = useState('')
   const [showMermaid, setShowMermaid] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -215,7 +217,18 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
             </ActionDropdown>
           </div>
  
-          {/* Group 2: Search */}
+          {/* Group 2: Complexity overlay toggle */}
+          <div className="toolbar-group">
+            <button
+              className={`toolbar-btn ${complexityOverlay ? 'toolbar-btn--active' : ''}`}
+              onClick={onToggleComplexityOverlay}
+              title="Color nodes by cyclomatic complexity"
+            >
+              <span>◈</span> <span>Complexity</span>
+            </button>
+          </div>
+
+          {/* Group 3: Search */}
           <div className="toolbar-group">
             <div className="toolbar-search-wrapper">
               <input
@@ -228,7 +241,7 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
             </div>
           </div>
  
-          {/* Group 3: Exports */}
+          {/* Group 4: Exports */}
           <div className="toolbar-group">
             <ActionDropdown 
               label="Export" 
@@ -251,7 +264,7 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
             </ActionDropdown>
           </div>
  
-          {/* Group 4: System */}
+          {/* Group 5: System */}
           <div className="toolbar-group">
             <button
               onClick={handleScan}

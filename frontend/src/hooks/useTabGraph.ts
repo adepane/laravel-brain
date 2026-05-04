@@ -17,7 +17,13 @@ interface UseTabGraphResult {
 function toElements(data: GraphData): ElementDefinition[] {
   return [
     ...data.nodes.map((n) => ({
-      data: { id: n.id, label: n.label, type: n.type, ...n.data },
+      data: {
+        id: n.id,
+        label: n.label,
+        type: n.type,
+        ...n.data,
+        metrics_cc: (n.data?.metrics as { cyclomaticComplexity?: number } | undefined)?.cyclomaticComplexity ?? 0,
+      },
     })),
     ...data.edges.map((e) => ({
       data: { id: e.id, source: e.source, target: e.target, label: e.label, type: e.type },
