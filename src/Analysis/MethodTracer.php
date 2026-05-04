@@ -407,8 +407,8 @@ class MethodTracer
                     return;
                 }
                 $varName = $node->var->name;
-                $class   = $node->expr->class->toString();
-                $fqcn    = $this->useMap[$class] ?? $class;
+                $class = $node->expr->class->toString();
+                $fqcn = $this->useMap[$class] ?? $class;
 
                 if (! $this->looksLikeModel($fqcn) && ! $this->isFrameworkClass($fqcn) && str_contains($fqcn, '\\')) {
                     $this->varTypeMap[$varName] = $fqcn;
