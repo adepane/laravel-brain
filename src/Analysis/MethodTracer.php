@@ -255,6 +255,8 @@ class MethodTracer
                     $this->handleFuncCall($node);
                 } elseif ($node instanceof Node\Expr\New_) {
                     $this->handleNew($node);
+                } elseif ($node instanceof Node\Expr\Assign) {
+                    $this->handleAssign($node);
                 }
 
                 return null;
@@ -388,6 +390,28 @@ class MethodTracer
                         'type' => $type,
                         'visibility' => 'public',
                     ];
+                }
+            }
+
+            // ── $var = new SomeClass() — register local var for later method calls ─
+
+            private function handleAssign(Node\Expr\Assign $node): void
+            {
+                if (! $node->expr instanceof Node\Expr\New_) {
+                    return;
+                }
+                if (! $node->var instanceof Node\Expr\Variable || ! is_string($node->var->name)) {
+                    return;
+                }
+                if (! $node->expr->class instanceof Node\Name) {
+                    return;
+                }
+                $varName = $node->var->name;
+                $class   = $node->expr->class->toString();
+                $fqcn    = $this->useMap[$class] ?? $class;
+
+                if (! $this->looksLikeModel($fqcn) && ! $this->isFrameworkClass($fqcn) && str_contains($fqcn, '\\')) {
+                    $this->varTypeMap[$varName] = $fqcn;
                 }
             }
 
