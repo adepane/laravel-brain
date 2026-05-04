@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import type { Core } from 'cytoscape'
 import { LARGE_GRAPH_THRESHOLD } from '../utils/graphConstants'
 import { ExportModal } from './ExportModal'
+import { AiRulesModal } from './AiRulesModal'
 import { graphToMermaid, downloadPng } from '../utils/exportUtils'
 import type { GraphData } from '../types/graph'
 
@@ -74,6 +75,7 @@ function ActionDropdown({ label, icon, children }: { label: string, icon: React.
 export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, cyRef, complexityOverlay, onToggleComplexityOverlay }: Props) {
   const [searchValue, setSearchValue] = useState('')
   const [showMermaid, setShowMermaid] = useState(false)
+  const [showAiRules, setShowAiRules] = useState(false)
   const [scanning, setScanning] = useState(false)
   const timeoutRef = useRef<number | null>(null)
 
@@ -261,6 +263,14 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
                   <span>🗺</span> <span>Copy Mermaid Code</span>
                 </button>
               </div>
+              <div className="dropdown-item">
+                <button
+                  onClick={() => setShowAiRules(true)}
+                  className="toolbar-btn w-full"
+                >
+                  <span>🤖</span> <span>Generate AI Rules</span>
+                </button>
+              </div>
             </ActionDropdown>
           </div>
  
@@ -298,6 +308,10 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
           </div>
         </div>
       </div>
+
+      {showAiRules && (
+        <AiRulesModal onClose={() => setShowAiRules(false)} />
+      )}
 
       {showMermaid && graphData && (
         <ExportModal

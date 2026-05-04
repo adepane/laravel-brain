@@ -1,0 +1,61 @@
+<?php
+
+declare(strict_types=1);
+
+namespace LaraMint\LaravelBrain\Commands;
+
+use Illuminate\Console\Command;
+use LaraMint\LaravelBrain\Ai\ContextExporter;
+
+class ExportContextCommand extends Command
+{
+    protected $signature = 'brain:export-context
+                            {--route=      : Filter by route label or URI (case-insensitive)}
+                            {--node=       : Target a specific node ID}
+                            {--budget=6000 : Token budget}
+                            {--format=markdown : Output format (markdown|json)}
+                            {--output=     : Write to file path instead of stdout}';
+
+    protected $description = 'Export a deterministic AI context snapshot from the scanned graph';
+
+    public function handle(): int
+    {
+        $storageDir = storage_path('app/laravel-brain');
+
+        if (! file_exists($storageDir.'/.graph-all.json')) {
+            $this->error('No scan data found — run php artisan brain:scan first');
+
+            return self::FAILURE;
+        }
+
+        $format = in_array($this->option('format'), ['markdown', 'json'], true)
+            ? (string) $this->option('format')
+            : 'markdown';
+
+        $exporter = new ContextExporter($storageDir, base_path());
+
+        try {
+            $output = $exporter->export(
+                nodeId: $this->option('node') ? (string) $this->option('node') : null,
+                routeLabel: $this->option('route') ? (string) $this->option('route') : null,
+                budget: max(500, (int) $this->option('budget')),
+                format: $format,
+            );
+        } catch (\RuntimeException $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $outputPath = $this->option('output') ? (string) $this->option('output') : null;
+
+        if ($outputPath) {
+            file_put_contents($outputPath, $output);
+            $this->info("Context written to {$outputPath}");
+        } else {
+            $this->line($output);
+        }
+
+        return self::SUCCESS;
+    }
+}
