@@ -195,6 +195,8 @@ export default function App() {
   const onHideAll = useCallback(() => setVisibleTypes(new Set()), [])
 
   const [scanning, setScanning] = useState(false)
+  const [complexityOverlay, setComplexityOverlay] = useState(false)
+  const [complexityFilter, setComplexityFilter] = useState<'all' | 'complex' | 'critical'>('all')
 
   const handleScan = async () => {
     if (!window.confirm('This will scan the entire project. Proceed?')) return
@@ -308,6 +310,8 @@ export default function App() {
         onSearch={setSearchQuery}
         onToggleTheme={toggleTheme}
         cyRef={cyRef}
+        complexityOverlay={complexityOverlay}
+        onToggleComplexityOverlay={() => setComplexityOverlay(v => !v)}
       />
       <div className="main">
         <LeftSidebar
@@ -320,6 +324,11 @@ export default function App() {
           onToggle={toggleType}
           onShowAll={onShowAll}
           onHideAll={onHideAll}
+          graphData={tabState.data ?? null}
+          complexityFilter={complexityFilter}
+          onComplexityFilterChange={setComplexityFilter}
+          onNodeSelect={handleNodeSelect}
+          selectedId={selectedId}
         />
         <div className="graph-container">
           {tabState.loading && (
@@ -369,6 +378,7 @@ export default function App() {
               onNodeSelect={handleNodeSelect}
               cyRef={cyRef}
               stressTestNodeId={stressTestNodeId}
+              complexityOverlay={complexityOverlay}
             />
           )}
         </div>

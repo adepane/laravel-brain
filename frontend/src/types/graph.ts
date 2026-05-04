@@ -21,6 +21,13 @@ export interface GraphMeta {
   edgeCount: number
 }
 
+export interface GraphNodeMetrics {
+  lineCount: number
+  cyclomaticComplexity: number
+  statementCount: number
+  paramCount: number
+}
+
 export interface GraphNode {
   id: string
   type: 'route' | 'middleware' | 'controller' | 'action' | 'service' | 'model' | 'event' | 'job' | 'command' | 'channel' | 'schedule'

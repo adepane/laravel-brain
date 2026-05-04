@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useMemo } from 'react'
 import { FilterPanel } from './FilterPanel'
-import type { TabEntry } from '../types/graph'
+import { ComplexityPanel } from './ComplexityPanel'
+import type { TabEntry, GraphData } from '../types/graph'
 
 interface PrefixGroup {
   prefix: string
@@ -22,6 +23,11 @@ interface Props {
   onToggle: (type: string) => void
   onShowAll: () => void
   onHideAll: () => void
+  graphData: GraphData | null
+  complexityFilter: 'all' | 'complex' | 'critical'
+  onComplexityFilterChange: (f: 'all' | 'complex' | 'critical') => void
+  onNodeSelect: (id: string) => void
+  selectedId: string | null
 }
 
 const METHOD_COLORS: Record<string, string> = {
@@ -63,7 +69,9 @@ function RouteItem({ tab, isActive, isLoading, onSelect }: {
 export function LeftSidebar({
   fileGroups, activeId, loadingId, onSelect,
   visibleTypes, counts, onToggle, onShowAll, onHideAll,
+  graphData, complexityFilter, onComplexityFilterChange, onNodeSelect, selectedId,
 }: Props) {
+  const [leftTab, setLeftTab] = useState<'routes' | 'complexity'>('routes')
   const [topHeight, setTopHeight] = useState(320)
   const [search, setSearch] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -131,8 +139,33 @@ export function LeftSidebar({
 
   return (
     <div className="left-sidebar" ref={containerRef}>
+      <div className="left-sidebar-tabs">
+        <button
+          className={`left-sidebar-tab ${leftTab === 'routes' ? 'left-sidebar-tab--active' : ''}`}
+          onClick={() => setLeftTab('routes')}
+        >
+          Routes
+        </button>
+        <button
+          className={`left-sidebar-tab ${leftTab === 'complexity' ? 'left-sidebar-tab--active' : ''}`}
+          onClick={() => setLeftTab('complexity')}
+        >
+          Complexity
+        </button>
+      </div>
+
       <div className="left-sidebar-top" style={{ height: topHeight }}>
 
+        {leftTab === 'complexity' ? (
+          <ComplexityPanel
+            graphData={graphData}
+            filter={complexityFilter}
+            onFilterChange={onComplexityFilterChange}
+            onNodeSelect={onNodeSelect}
+            selectedId={selectedId}
+          />
+        ) : (
+        <>
         <div className="left-nav-search">
           <input
             className="left-nav-search-input"
@@ -216,6 +249,8 @@ export function LeftSidebar({
             )
           })}
         </div>
+        </>
+        )}
       </div>
 
       <div className="left-sidebar-handle" onMouseDown={onMouseDown} />

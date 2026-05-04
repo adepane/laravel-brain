@@ -10,7 +10,7 @@ import coseBilkent from 'cytoscape-cose-bilkent'
 cytoscape.use(dagre)
 cytoscape.use(coseBilkent)
 
-import { LARGE_GRAPH_THRESHOLD, PACKET_ANIMATION_THRESHOLD, ACCENT_COLORS, BG_COLORS, HIGHLIGHT_COLOR } from '../utils/graphConstants'
+import { LARGE_GRAPH_THRESHOLD, PACKET_ANIMATION_THRESHOLD, ACCENT_COLORS, BG_COLORS, HIGHLIGHT_COLOR, CC_TIERS } from '../utils/graphConstants'
 
 // ── Packet animation types ────────────────────────────────────────────────────
 
@@ -79,6 +79,17 @@ function evalCurve(
 
 // ── Cytoscape stylesheet ──────────────────────────────────────────────────────
 
+function nodePrefix(ele: NodeSingular): string {
+  let prefix = ''
+  if (ele.data('hasN1'))     prefix += '⚠️ '
+  if (ele.data('fatMethod')) prefix += '🧱 '
+  if (ele.data('fatClass'))  prefix += '🏗️ '
+  const vis = ele.data('visibility')
+  if (vis === 'private')   prefix += '🔒 '
+  if (vis === 'protected') prefix += '🛡️ '
+  return prefix
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildStylesheet(dark: boolean): any[] {
   const edgeLine = dark ? 'rgba(255,255,255, 0.07)' : 'rgba(0,0,0,0.1)'
@@ -89,18 +100,7 @@ function buildStylesheet(dark: boolean): any[] {
     {
       selector: 'node',
       style: {
-        label: (ele: NodeSingular) => {
-          let prefix = ''
-          if (ele.data('hasN1'))     prefix += '⚠️ '
-          if (ele.data('fatMethod')) prefix += '🧱 '
-          if (ele.data('fatClass'))  prefix += '🏗️ '
-
-          const vis = ele.data('visibility')
-          if (vis === 'private') prefix += '🔒 '
-          if (vis === 'protected') prefix += '🛡️ '
-
-          return prefix + ele.data('label')
-        },
+        label: (ele: NodeSingular) => nodePrefix(ele) + ele.data('label'),
         'text-valign': 'center',
         'text-halign': 'center',
         'font-size': 11,
@@ -137,6 +137,27 @@ function buildStylesheet(dark: boolean): any[] {
         color: color,
       } as Css.Node,
     })),
+    // CC overlay tiers — activate by adding class 'cc-overlay' to nodes
+    ...CC_TIERS.map(tier => ({
+      selector: tier.max < Infinity
+        ? `node.cc-overlay[metrics_cc >= ${tier.min}][metrics_cc <= ${tier.max}]`
+        : `node.cc-overlay[metrics_cc >= ${tier.min}]`,
+      style: {
+        'background-color': tier.fill,
+        'border-color': tier.border,
+        color: tier.border,
+      } as Css.Node,
+    })),
+    {
+      selector: 'node.cc-overlay',
+      style: {
+        label: (ele: NodeSingular) => {
+          const cc = ele.data('metrics_cc') as number
+          const suffix = cc > 0 ? ` [${cc}]` : ''
+          return nodePrefix(ele) + ele.data('label') + suffix
+        },
+      } as Css.Node,
+    },
     { selector: 'node.dimmed', style: { opacity: 0.1, filter: 'grayscale(100%)' } },
     { selector: 'node.hidden', style: { display: 'none' } },
     {
@@ -245,11 +266,12 @@ interface Props {
   onNodeSelect: (id: string | null) => void
   cyRef: React.MutableRefObject<Core | null>
   stressTestNodeId?: string | null
+  complexityOverlay: boolean
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef, stressTestNodeId }: Props) {
+export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef, stressTestNodeId, complexityOverlay }: Props) {
   const nodeCount = useMemo(() => elements.filter((e) => !e.data?.source).length, [elements])
   const stylesheet = useMemo(() => buildStylesheet(theme === 'dark'), [theme])
   const prevSearch = useRef(searchQuery)
@@ -625,6 +647,16 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
     return () => { if (layoutTimeout.current) clearTimeout(layoutTimeout.current) }
   }, [visibleTypes, layout, rankDir, cyRef])
 
+  // Complexity overlay: add/remove class on all nodes
+  useEffect(() => {
+    const cy = cyRef.current
+    if (!cy) return
+    cy.batch(() => {
+      if (complexityOverlay) cy.nodes().addClass('cc-overlay')
+      else cy.nodes().removeClass('cc-overlay')
+    })
+  }, [complexityOverlay, cyRef])
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -667,6 +699,24 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
           pointerEvents: 'none',
         }}
       />
+
+      {/* Complexity overlay legend */}
+      {complexityOverlay && (
+        <div className="cc-legend">
+          <div className="cc-legend-title">Cyclomatic Complexity</div>
+          {CC_TIERS.map(tier => (
+            <div key={tier.label} className="cc-legend-row">
+              <span className="cc-legend-swatch" style={{ background: tier.border }} />
+              <span className="cc-legend-label" style={{ color: tier.border }}>
+                {tier.label}
+              </span>
+              <span className="cc-legend-range">
+                {tier.max === Infinity ? `≥${tier.min}` : `${tier.min}–${tier.max}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

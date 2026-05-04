@@ -24,3 +24,14 @@ export const BG_COLORS: Record<string, string> = {
 }
 
 export const HIGHLIGHT_COLOR = '#8B6FE8'
+
+export const CC_TIERS = [
+  { label: 'Low',      min: 1,  max: 5,          fill: '#0d2e1a', border: '#4ade80' },
+  { label: 'Moderate', min: 6,  max: 10,         fill: '#2e2200', border: '#facc15' },
+  { label: 'High',     min: 11, max: 15,         fill: '#2e1200', border: '#fb923c' },
+  { label: 'Critical', min: 16, max: Infinity,   fill: '#2e0a0a', border: '#f87171' },
+]
+
+export function ccTier(cc: number) {
+  return CC_TIERS.find(t => cc >= t.min && cc <= t.max) ?? CC_TIERS[0]
+}

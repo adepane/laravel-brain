@@ -2168,3 +2168,203 @@ body {
   min-width: 0;
 }
 
+/* ── Left sidebar tab switcher ── */
+.left-sidebar-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.left-sidebar-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 8px 4px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.left-sidebar-tab:hover {
+  color: var(--text);
+}
+
+.left-sidebar-tab--active {
+  color: #a78bfa;
+  border-bottom-color: #a78bfa;
+}
+
+/* ── Complexity panel ── */
+.complexity-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.complexity-filters {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px 4px;
+  flex-shrink: 0;
+}
+
+.complexity-filter-btn {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.complexity-filter-btn:hover {
+  color: var(--text);
+  border-color: #a78bfa;
+}
+
+.complexity-filter-btn--active {
+  color: #a78bfa;
+  border-color: #a78bfa;
+  background: rgba(167,139,250,0.1);
+}
+
+.complexity-summary {
+  padding: 2px 10px 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.complexity-empty {
+  padding: 24px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.complexity-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 8px;
+}
+
+.complexity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.complexity-row:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.complexity-row--active {
+  background: rgba(167,139,250,0.08);
+  border-bottom-color: rgba(167,139,250,0.2);
+}
+
+.complexity-badge {
+  flex-shrink: 0;
+  min-width: 28px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.complexity-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.complexity-type {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+/* ── Complexity overlay legend ── */
+.cc-legend {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  background: rgba(17, 18, 24, 0.88);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 10px 14px;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  min-width: 160px;
+}
+
+.cc-legend-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.4);
+  margin-bottom: 8px;
+}
+
+.cc-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.cc-legend-row:last-child {
+  margin-bottom: 0;
+}
+
+.cc-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.cc-legend-label {
+  font-size: 11px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.cc-legend-range {
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: rgba(255,255,255,0.4);
+}
+
