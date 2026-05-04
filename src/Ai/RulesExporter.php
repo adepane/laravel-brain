@@ -8,13 +8,13 @@ class RulesExporter
 {
     /** @var array<string, array{path: string, label: string}> */
     public const TARGETS = [
-        'claude'   => ['path' => 'CLAUDE.md',                              'label' => 'Claude Code'],
-        'cursor'   => ['path' => '.cursor/rules/laravel-brain.mdc',        'label' => 'Cursor'],
+        'claude' => ['path' => 'CLAUDE.md',                              'label' => 'Claude Code'],
+        'cursor' => ['path' => '.cursor/rules/laravel-brain.mdc',        'label' => 'Cursor'],
         'windsurf' => ['path' => '.windsurf/rules/laravel-brain.md',       'label' => 'Windsurf'],
-        'copilot'  => ['path' => '.github/copilot-instructions.md',        'label' => 'GitHub Copilot'],
-        'junie'    => ['path' => '.junie/guidelines.md',                   'label' => 'JetBrains Junie'],
-        'aider'    => ['path' => 'CONVENTIONS.md',                         'label' => 'Aider'],
-        'agents'   => ['path' => 'AGENTS.md',                              'label' => 'AGENTS.md (universal)'],
+        'copilot' => ['path' => '.github/copilot-instructions.md',        'label' => 'GitHub Copilot'],
+        'junie' => ['path' => '.junie/guidelines.md',                   'label' => 'JetBrains Junie'],
+        'aider' => ['path' => 'CONVENTIONS.md',                         'label' => 'Aider'],
+        'agents' => ['path' => 'AGENTS.md',                              'label' => 'AGENTS.md (universal)'],
     ];
 
     public function __construct(
@@ -33,14 +33,14 @@ class RulesExporter
         $body = $this->buildBody($data);
 
         return match ($target) {
-            'claude'   => $this->wrapClaude($body, $data),
-            'cursor'   => $this->wrapCursor($body, $data),
+            'claude' => $this->wrapClaude($body, $data),
+            'cursor' => $this->wrapCursor($body, $data),
             'windsurf' => $this->wrapWindsurf($body, $data),
-            'copilot'  => $this->wrapCopilot($body, $data),
-            'junie'    => $this->wrapJunie($body, $data),
-            'aider'    => $this->wrapAider($body, $data),
-            'agents'   => $this->wrapAgents($body, $data),
-            default    => throw new \InvalidArgumentException("Unknown target: {$target}"),
+            'copilot' => $this->wrapCopilot($body, $data),
+            'junie' => $this->wrapJunie($body, $data),
+            'aider' => $this->wrapAider($body, $data),
+            'agents' => $this->wrapAgents($body, $data),
+            default => throw new \InvalidArgumentException("Unknown target: {$target}"),
         };
     }
 
@@ -63,14 +63,14 @@ class RulesExporter
      */
     private function loadProjectData(): array
     {
-        $graphFile    = $this->storageDir.'/.graph-all.json';
+        $graphFile = $this->storageDir.'/.graph-all.json';
         $manifestFile = $this->storageDir.'/.graph-manifest.json';
 
         if (! file_exists($graphFile)) {
             throw new \RuntimeException('No scan data found — run php artisan brain:scan first');
         }
 
-        $graph    = json_decode((string) file_get_contents($graphFile), true) ?? [];
+        $graph = json_decode((string) file_get_contents($graphFile), true) ?? [];
         $manifest = file_exists($manifestFile)
             ? (json_decode((string) file_get_contents($manifestFile), true) ?? [])
             : [];
@@ -86,44 +86,43 @@ class RulesExporter
 
         // Top routes by complexity of their action nodes (up to 10)
         $actionNodes = array_filter($nodes, fn ($n) => isset($n['data']['metrics']));
-        usort($actionNodes, fn ($a, $b) =>
-            ($b['data']['metrics']['cyclomaticComplexity'] ?? 0) <=>
+        usort($actionNodes, fn ($a, $b) => ($b['data']['metrics']['cyclomaticComplexity'] ?? 0) <=>
             ($a['data']['metrics']['cyclomaticComplexity'] ?? 0)
         );
-        $hotspots = array_slice(array_values($actionNodes), 0, 10);
+        $hotspots = array_slice($actionNodes, 0, 10);
 
         // Smell nodes
-        $n1Nodes    = array_values(array_filter($nodes, fn ($n) => ! empty($n['data']['hasN1'])));
+        $n1Nodes = array_values(array_filter($nodes, fn ($n) => ! empty($n['data']['hasN1'])));
         $fatMethods = array_values(array_filter($nodes, fn ($n) => ! empty($n['data']['fatMethod'])));
         $fatClasses = array_values(array_filter($nodes, fn ($n) => ! empty($n['data']['fatClass'])));
 
         // Top routes (up to 15)
         $routeNodes = array_values(array_filter($nodes, fn ($n) => ($n['type'] ?? '') === 'route'));
-        $topRoutes  = array_slice($routeNodes, 0, 15);
+        $topRoutes = array_slice($routeNodes, 0, 15);
 
         // Packages
-        $backendPackages  = $this->readComposerPackages();
+        $backendPackages = $this->readComposerPackages();
         $frontendPackages = $this->readFrontendPackages();
 
         // PHP + Laravel version
-        $phpVersion     = $this->extractPhpVersion($backendPackages);
+        $phpVersion = $this->extractPhpVersion($backendPackages);
         $laravelVersion = $this->extractPackageVersion('laravel/framework', $backendPackages);
-        $frontendStack  = $this->detectFrontendStack($frontendPackages);
+        $frontendStack = $this->detectFrontendStack($frontendPackages);
 
         return [
-            'project'          => (string) ($manifest['project'] ?? ($graph['meta']['project'] ?? 'unknown')),
-            'analyzedAt'       => (string) ($manifest['analyzedAt'] ?? ($graph['meta']['analyzedAt'] ?? '')),
-            'typeCounts'       => $typeCounts,
-            'hotspots'         => $hotspots,
-            'n1Nodes'          => $n1Nodes,
-            'fatMethods'       => $fatMethods,
-            'fatClasses'       => $fatClasses,
-            'topRoutes'        => $topRoutes,
-            'backendPackages'  => $backendPackages,
+            'project' => (string) ($manifest['project'] ?? ($graph['meta']['project'] ?? 'unknown')),
+            'analyzedAt' => (string) ($manifest['analyzedAt'] ?? ($graph['meta']['analyzedAt'] ?? '')),
+            'typeCounts' => $typeCounts,
+            'hotspots' => $hotspots,
+            'n1Nodes' => $n1Nodes,
+            'fatMethods' => $fatMethods,
+            'fatClasses' => $fatClasses,
+            'topRoutes' => $topRoutes,
+            'backendPackages' => $backendPackages,
             'frontendPackages' => $frontendPackages,
-            'phpVersion'       => $phpVersion,
-            'laravelVersion'   => $laravelVersion,
-            'frontendStack'    => $frontendStack,
+            'phpVersion' => $phpVersion,
+            'laravelVersion' => $laravelVersion,
+            'frontendStack' => $frontendStack,
         ];
     }
 
@@ -145,16 +144,16 @@ class RulesExporter
         $lines[] = '';
 
         // Architecture at a glance
-        $tc      = (array) $data['typeCounts'];
-        $counts  = [
-            'Routes'   => $tc['route']      ?? 0,
-            'Actions'  => $tc['action']     ?? 0,
-            'Services' => $tc['service']    ?? 0,
-            'Models'   => $tc['model']      ?? 0,
-            'Events'   => $tc['event']      ?? 0,
-            'Jobs'     => $tc['job']        ?? 0,
-            'Commands' => $tc['command']    ?? 0,
-            'Channels' => $tc['channel']    ?? 0,
+        $tc = (array) $data['typeCounts'];
+        $counts = [
+            'Routes' => $tc['route'] ?? 0,
+            'Actions' => $tc['action'] ?? 0,
+            'Services' => $tc['service'] ?? 0,
+            'Models' => $tc['model'] ?? 0,
+            'Events' => $tc['event'] ?? 0,
+            'Jobs' => $tc['job'] ?? 0,
+            'Commands' => $tc['command'] ?? 0,
+            'Channels' => $tc['channel'] ?? 0,
         ];
         $counts = array_filter($counts, fn ($v) => $v > 0);
 
@@ -172,8 +171,8 @@ class RulesExporter
             $lines[] = '| Method | URI | Controller |';
             $lines[] = '|--------|-----|-----------|';
             foreach ($topRoutes as $route) {
-                $method     = (string) ($route['data']['method']     ?? '?');
-                $uri        = (string) ($route['data']['uri']        ?? '?');
+                $method = (string) ($route['data']['method'] ?? '?');
+                $uri = (string) ($route['data']['uri'] ?? '?');
                 $controller = (string) ($route['data']['controller'] ?? '');
                 if ($controller === '') {
                     $controller = (string) ($route['label'] ?? '?');
@@ -192,9 +191,9 @@ class RulesExporter
             $lines[] = '| Class / Method | Cyclomatic | Lines |';
             $lines[] = '|---------------|-----------|-------|';
             foreach ($hotspots as $node) {
-                $m   = (array) ($node['data']['metrics'] ?? []);
-                $cc  = $m['cyclomaticComplexity'] ?? '?';
-                $loc = $m['lineCount']            ?? '?';
+                $m = (array) ($node['data']['metrics'] ?? []);
+                $cc = $m['cyclomaticComplexity'] ?? '?';
+                $loc = $m['lineCount'] ?? '?';
                 $lines[] = "| {$node['label']} | {$cc} | {$loc} |";
             }
             $lines[] = '';
@@ -224,7 +223,7 @@ class RulesExporter
             $lines[] = '| Package | Version | Dev |';
             $lines[] = '|---------|---------|-----|';
             foreach ($backend as $pkg) {
-                $dev     = $pkg['dev'] ? '✓' : '';
+                $dev = $pkg['dev'] ? '✓' : '';
                 $lines[] = "| `{$pkg['name']}` | {$pkg['version']} | {$dev} |";
             }
             $lines[] = '';
@@ -237,7 +236,7 @@ class RulesExporter
             $lines[] = '| Package | Version | Dev |';
             $lines[] = '|---------|---------|-----|';
             foreach ($frontend as $pkg) {
-                $dev     = $pkg['dev'] ? '✓' : '';
+                $dev = $pkg['dev'] ? '✓' : '';
                 $lines[] = "| `{$pkg['name']}` | {$pkg['version']} | {$dev} |";
             }
             $lines[] = '';
@@ -252,7 +251,7 @@ class RulesExporter
     private function wrapClaude(string $body, array $data): string
     {
         $project = $data['project'];
-        $date    = $data['analyzedAt'];
+        $date = $data['analyzedAt'];
 
         return <<<MD
         # CLAUDE.md
@@ -277,7 +276,7 @@ class RulesExporter
     private function wrapCursor(string $body, array $data): string
     {
         $project = $data['project'];
-        $date    = $data['analyzedAt'];
+        $date = $data['analyzedAt'];
 
         $frontmatter = <<<YAML
         ---
@@ -303,7 +302,7 @@ class RulesExporter
     private function wrapWindsurf(string $body, array $data): string
     {
         $project = $data['project'];
-        $date    = $data['analyzedAt'];
+        $date = $data['analyzedAt'];
 
         return <<<MD
         # {$project} — Project Context
@@ -319,7 +318,7 @@ class RulesExporter
     private function wrapCopilot(string $body, array $data): string
     {
         $project = $data['project'];
-        $date    = $data['analyzedAt'];
+        $date = $data['analyzedAt'];
 
         return <<<MD
         # {$project} — Copilot Instructions
@@ -335,7 +334,7 @@ class RulesExporter
     private function wrapJunie(string $body, array $data): string
     {
         $project = $data['project'];
-        $date    = $data['analyzedAt'];
+        $date = $data['analyzedAt'];
 
         return <<<MD
         # {$project} — JetBrains AI Guidelines
@@ -356,7 +355,7 @@ class RulesExporter
     private function wrapAider(string $body, array $data): string
     {
         $project = $data['project'];
-        $date    = $data['analyzedAt'];
+        $date = $data['analyzedAt'];
 
         return <<<MD
         # {$project} — Conventions
@@ -373,7 +372,7 @@ class RulesExporter
     private function wrapAgents(string $body, array $data): string
     {
         $project = $data['project'];
-        $date    = $data['analyzedAt'];
+        $date = $data['analyzedAt'];
 
         return <<<MD
         # {$project} — AGENTS.md
@@ -424,7 +423,7 @@ class RulesExporter
      */
     private function readFrontendPackages(): array
     {
-        $root       = rtrim($this->projectPath, '/');
+        $root = rtrim($this->projectPath, '/');
         $candidates = [$root.'/package.json', $root.'/frontend/package.json'];
 
         foreach ($candidates as $file) {
@@ -463,7 +462,7 @@ class RulesExporter
         $file = rtrim($this->projectPath, '/').'/composer.json';
         if (file_exists($file)) {
             $data = json_decode((string) file_get_contents($file), true);
-            $ver  = (string) ($data['require']['php'] ?? '');
+            $ver = (string) ($data['require']['php'] ?? '');
             if ($ver !== '') {
                 return $ver;
             }
@@ -494,13 +493,27 @@ class RulesExporter
         $names = array_column($packages, 'name');
         $parts = [];
 
-        if (in_array('react', $names, true))         $parts[] = 'React';
-        if (in_array('vue', $names, true))            $parts[] = 'Vue';
-        if (in_array('@angular/core', $names, true))  $parts[] = 'Angular';
-        if (in_array('svelte', $names, true))         $parts[] = 'Svelte';
-        if (in_array('vite', $names, true))           $parts[] = 'Vite';
-        if (in_array('typescript', $names, true))     $parts[] = 'TypeScript';
-        if (in_array('tailwindcss', $names, true))    $parts[] = 'Tailwind CSS';
+        if (in_array('react', $names, true)) {
+            $parts[] = 'React';
+        }
+        if (in_array('vue', $names, true)) {
+            $parts[] = 'Vue';
+        }
+        if (in_array('@angular/core', $names, true)) {
+            $parts[] = 'Angular';
+        }
+        if (in_array('svelte', $names, true)) {
+            $parts[] = 'Svelte';
+        }
+        if (in_array('vite', $names, true)) {
+            $parts[] = 'Vite';
+        }
+        if (in_array('typescript', $names, true)) {
+            $parts[] = 'TypeScript';
+        }
+        if (in_array('tailwindcss', $names, true)) {
+            $parts[] = 'Tailwind CSS';
+        }
 
         return implode(' · ', $parts);
     }

@@ -201,7 +201,7 @@ class ContextExporter
         $charBudget = $ctx->tokenBudget * self::CHARS_PER_TOKEN;
         $parts = [];
 
-        $parts[] = "# Laravel Brain AI Context";
+        $parts[] = '# Laravel Brain AI Context';
         $parts[] = "> Project: {$ctx->project} | Analyzed: {$ctx->analyzedAt} | Focal: {$ctx->focalLabel} | Budget: {$ctx->tokenBudget} tokens";
         $parts[] = '';
 
@@ -216,9 +216,9 @@ class ContextExporter
 
         // Route section
         if ($focalNode && ($focalNode['type'] ?? '') === 'route') {
-            $parts[] = "## Route";
-            $parts[] = "- Method: ".($focalNode['data']['method'] ?? '?');
-            $parts[] = "- URI: ".($focalNode['data']['uri'] ?? '?');
+            $parts[] = '## Route';
+            $parts[] = '- Method: '.($focalNode['data']['method'] ?? '?');
+            $parts[] = '- URI: '.($focalNode['data']['uri'] ?? '?');
 
             // Middleware from outgoing edges to middleware-type nodes
             $middlewareLabels = [];
@@ -232,7 +232,7 @@ class ContextExporter
             }
 
             if (! empty($middlewareLabels)) {
-                $parts[] = "- Middleware: ".implode(', ', $middlewareLabels);
+                $parts[] = '- Middleware: '.implode(', ', $middlewareLabels);
             }
 
             $parts[] = '';
@@ -241,7 +241,7 @@ class ContextExporter
         // Call chain section
         $chain = $this->buildCallChain($ctx->nodes, $ctx->edges);
         if (! empty($chain)) {
-            $parts[] = "## Call Chain (depth ≤ 3)";
+            $parts[] = '## Call Chain (depth ≤ 3)';
             $parts[] = implode(' → ', $chain);
             $parts[] = '';
         }
@@ -249,14 +249,13 @@ class ContextExporter
         // Complexity hotspots
         $hotspots = array_filter($ctx->nodes, fn ($n) => isset($n['data']['metrics']));
         if (! empty($hotspots)) {
-            usort($hotspots, fn ($a, $b) =>
-                ($b['data']['metrics']['cyclomaticComplexity'] ?? 0) <=>
+            usort($hotspots, fn ($a, $b) => ($b['data']['metrics']['cyclomaticComplexity'] ?? 0) <=>
                 ($a['data']['metrics']['cyclomaticComplexity'] ?? 0)
             );
 
-            $parts[] = "## Complexity Hotspots";
-            $parts[] = "| Label | Cyclomatic | Lines |";
-            $parts[] = "|-------|-----------|-------|";
+            $parts[] = '## Complexity Hotspots';
+            $parts[] = '| Label | Cyclomatic | Lines |';
+            $parts[] = '|-------|-----------|-------|';
             foreach ($hotspots as $n) {
                 $m = $n['data']['metrics'];
                 $cc = $m['cyclomaticComplexity'] ?? '?';
@@ -275,7 +274,7 @@ class ContextExporter
             }
         }
         if (! empty($allQueries)) {
-            $parts[] = "## Database Operations";
+            $parts[] = '## Database Operations';
             $parts[] = implode("\n", $allQueries);
             $parts[] = '';
         }
@@ -283,9 +282,9 @@ class ContextExporter
         // Backend packages (composer.json)
         $composerPackages = $this->readComposerPackages();
         if (! empty($composerPackages)) {
-            $parts[] = "## Backend Packages (composer.json)";
-            $parts[] = "| Package | Version | Dev |";
-            $parts[] = "|---------|---------|-----|";
+            $parts[] = '## Backend Packages (composer.json)';
+            $parts[] = '| Package | Version | Dev |';
+            $parts[] = '|---------|---------|-----|';
             foreach ($composerPackages as ['name' => $name, 'version' => $version, 'dev' => $dev]) {
                 $devMark = $dev ? 'yes' : '';
                 $parts[] = "| {$name} | {$version} | {$devMark} |";
@@ -296,9 +295,9 @@ class ContextExporter
         // Frontend packages (package.json)
         $frontendPackages = $this->readFrontendPackages();
         if (! empty($frontendPackages)) {
-            $parts[] = "## Frontend Packages (package.json)";
-            $parts[] = "| Package | Version | Dev |";
-            $parts[] = "|---------|---------|-----|";
+            $parts[] = '## Frontend Packages (package.json)';
+            $parts[] = '| Package | Version | Dev |';
+            $parts[] = '|---------|---------|-----|';
             foreach ($frontendPackages as ['name' => $name, 'version' => $version, 'dev' => $dev]) {
                 $devMark = $dev ? 'yes' : '';
                 $parts[] = "| {$name} | {$version} | {$devMark} |";

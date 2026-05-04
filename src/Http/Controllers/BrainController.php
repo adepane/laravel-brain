@@ -75,7 +75,7 @@ class BrainController extends Controller
         }
 
         $nodeId = $request->query('nodeId') ? (string) $request->query('nodeId') : null;
-        $route  = $request->query('route')  ? (string) $request->query('route')  : null;
+        $route = $request->query('route') ? (string) $request->query('route') : null;
         $budget = max(500, min(50000, (int) $request->query('budget', 6000)));
         $format = in_array($request->query('format', 'markdown'), ['markdown', 'json'], true)
             ? (string) $request->query('format', 'markdown')
@@ -114,7 +114,7 @@ class BrainController extends Controller
         }
 
         $validTargets = array_keys(RulesExporter::TARGETS);
-        $requested    = $request->input('targets', $validTargets);
+        $requested = $request->input('targets', $validTargets);
 
         if (! is_array($requested) || empty($requested)) {
             $requested = $validTargets;
@@ -128,16 +128,16 @@ class BrainController extends Controller
         }
 
         $exporter = new RulesExporter($storageDir, base_path());
-        $results  = [];
+        $results = [];
 
         foreach ($requested as $target) {
-            $label    = RulesExporter::TARGETS[$target]['label'];
+            $label = RulesExporter::TARGETS[$target]['label'];
             $destPath = $exporter->targetPath($target);
             $relative = str_replace(base_path().'/', '', $destPath);
 
             try {
                 $content = $exporter->generate($target);
-                $dir     = dirname($destPath);
+                $dir = dirname($destPath);
 
                 if (! is_dir($dir)) {
                     mkdir($dir, 0755, true);
@@ -146,18 +146,18 @@ class BrainController extends Controller
                 file_put_contents($destPath, $content);
 
                 $results[] = [
-                    'target'  => $target,
-                    'label'   => $label,
-                    'path'    => $relative,
+                    'target' => $target,
+                    'label' => $label,
+                    'path' => $relative,
                     'success' => true,
                 ];
             } catch (\Exception $e) {
                 $results[] = [
-                    'target'  => $target,
-                    'label'   => $label,
-                    'path'    => $relative,
+                    'target' => $target,
+                    'label' => $label,
+                    'path' => $relative,
                     'success' => false,
-                    'error'   => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ];
             }
         }

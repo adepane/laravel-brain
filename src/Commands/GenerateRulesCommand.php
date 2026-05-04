@@ -45,13 +45,13 @@ class GenerateRulesCommand extends Command
         }
 
         $isDryRun = (bool) $this->option('dry-run');
-        $force    = (bool) $this->option('force');
+        $force = (bool) $this->option('force');
 
-        $wrote  = 0;
+        $wrote = 0;
         $errors = 0;
 
         foreach ($targets as $target) {
-            $label    = RulesExporter::TARGETS[$target]['label'];
+            $label = RulesExporter::TARGETS[$target]['label'];
             $destPath = $exporter->targetPath($target);
             $relative = str_replace(base_path().'/', '', $destPath);
 
@@ -72,7 +72,7 @@ class GenerateRulesCommand extends Command
 
             try {
                 $content = $exporter->generate($target);
-                $dir     = dirname($destPath);
+                $dir = dirname($destPath);
 
                 if (! is_dir($dir)) {
                     mkdir($dir, 0755, true);
