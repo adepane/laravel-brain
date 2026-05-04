@@ -75,6 +75,26 @@ export interface Manifest {
   tabs: TabEntry[]
 }
 
+export interface SequenceActor {
+  id: string
+  label: string
+  type: string
+  color: string
+}
+
+export interface SequenceMessage {
+  fromIndex: number
+  toIndex: number
+  label: string
+  isReturn?: boolean
+  isAsync?: boolean
+}
+
+export interface SequenceDiagram {
+  actors: SequenceActor[]
+  messages: SequenceMessage[]
+}
+
 export interface StressTestConfig { method: string; url: string; count: number; concurrency: number; headers: Record<string, string>; body: string; timeout: number }
 export interface StressTestTiming { min: number; max: number; avg: number; p50: number; p95: number; p99: number }
 export interface StressTestResult { total: number; succeeded: number; failed: number; successRate: number; errorRate: number; throughput: number; timing: StressTestTiming; statusDistribution: Record<string, number>; errors: string[]; wallTimeMs: number }
