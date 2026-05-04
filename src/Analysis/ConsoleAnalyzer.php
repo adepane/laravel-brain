@@ -235,7 +235,7 @@ class ConsoleAnalyzer
 
             public function __construct(private string $file) {}
 
-            public function enterNode(Node $node): int|null
+            public function enterNode(Node $node): ?int
             {
                 if ($node instanceof Node\Stmt\Namespace_) {
                     $this->namespace = $node->name?->toString();
@@ -258,7 +258,7 @@ class ConsoleAnalyzer
                 return null;
             }
 
-            public function afterTraverse(array $nodes): int|null
+            public function afterTraverse(array $nodes): ?int
             {
                 if ($this->className && $this->signature !== null) {
                     $fqcn = $this->namespace
@@ -309,7 +309,7 @@ class ConsoleAnalyzer
                 private array $useMap,
             ) {}
 
-            public function enterNode(Node $node): int|null
+            public function enterNode(Node $node): ?int
             {
                 // protected $commands = [FooCommand::class, ...]
                 if ($node instanceof Node\Stmt\Property) {

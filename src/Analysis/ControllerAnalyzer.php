@@ -103,7 +103,7 @@ class ControllerAnalyzer
                 $this->useMap = $useMap;
             }
 
-            public function enterNode(Node $node): int|null
+            public function enterNode(Node $node): ?int
             {
                 if ($node instanceof Node\Stmt\Class_) {
                     $this->extends = $node->extends ? $node->extends->toString() : null;

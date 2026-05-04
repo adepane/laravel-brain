@@ -176,13 +176,13 @@ class BrainController extends Controller
         set_time_limit(120);
 
         $validated = $request->validate([
-            'method'      => 'required|in:GET,POST,PUT,PATCH,DELETE,HEAD',
-            'url'         => 'required|url',
-            'count'       => 'required|integer|min:1|max:200',
+            'method' => 'required|in:GET,POST,PUT,PATCH,DELETE,HEAD',
+            'url' => 'required|url',
+            'count' => 'required|integer|min:1|max:200',
             'concurrency' => 'required|integer|min:1|max:20',
-            'headers'     => 'nullable|array',
-            'body'        => 'nullable|string',
-            'timeout'     => 'nullable|numeric|min:1|max:30',
+            'headers' => 'nullable|array',
+            'body' => 'nullable|string',
+            'timeout' => 'nullable|numeric|min:1|max:30',
             'includeCsrf' => 'nullable|boolean',
         ]);
 

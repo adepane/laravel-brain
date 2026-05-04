@@ -245,7 +245,7 @@ class MethodTracer
                 $this->parentFqcn = $parentFqcn;
             }
 
-            public function enterNode(Node $node): int|null
+            public function enterNode(Node $node): ?int
             {
                 if ($node instanceof Node\Expr\StaticCall) {
                     $this->handleStaticCall($node);
@@ -550,7 +550,7 @@ class MethodTracer
 
             public ?string $extends = null;
 
-            public function enterNode(Node $node): int|null
+            public function enterNode(Node $node): ?int
             {
                 if ($node instanceof Node\Stmt\Class_) {
                     $this->extends = $node->extends ? $node->extends->toString() : null;
