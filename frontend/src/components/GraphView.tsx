@@ -266,12 +266,13 @@ interface Props {
   onNodeSelect: (id: string | null) => void
   cyRef: React.MutableRefObject<Core | null>
   stressTestNodeId?: string | null
+  stressRunKey?: number
   complexityOverlay: boolean
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef, stressTestNodeId, complexityOverlay }: Props) {
+export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef, stressTestNodeId, stressRunKey, complexityOverlay }: Props) {
   const nodeCount = useMemo(() => elements.filter((e) => !e.data?.source).length, [elements])
   const stylesheet = useMemo(() => buildStylesheet(theme === 'dark'), [theme])
   const prevSearch = useRef(searchQuery)
@@ -302,6 +303,8 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
 
     const src = edge.sourceEndpoint()
     const tgt = edge.targetEndpoint()
+    if (!isFinite(src.x) || !isFinite(src.y) || !isFinite(tgt.x) || !isFinite(tgt.y)) return
+
     const cps = edge.controlPoints() as { x: number; y: number }[] | undefined
     const tgtNodeId = edge.target().id()
 
@@ -378,7 +381,7 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
       clearInterval(id)
       cy.elements().removeClass('st-path')
     }
-  }, [stressTestNodeId, cyRef, spawnPacket])
+  }, [stressTestNodeId, stressRunKey, cyRef, spawnPacket])
 
   // ── Animation loop (single effect, hoisted function avoids self-reference lint error) ──
 
@@ -421,6 +424,7 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
         const cp2S = pkt.cp2 ? modelToScreen(pkt.cp2.x, pkt.cp2.y, pan, zoom) : undefined
 
         const pos = evalCurve(pkt.progress, srcS, tgtS, cp1S, cp2S)
+        if (!isFinite(pos.x) || !isFinite(pos.y)) { alive.push(pkt); continue }
 
         // ── Comet tail ─────────────────────────────────────────────────────────
         const trailLength = 0.09

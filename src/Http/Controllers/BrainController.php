@@ -8,6 +8,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use LaraMint\LaravelBrain\Ai\ContextExporter;
+use LaraMint\LaravelBrain\Ai\RulesExporter;
 use LaraMint\LaravelBrain\Analysis\ProjectAnalyzer;
 
 class BrainController extends Controller
@@ -58,6 +60,111 @@ class BrainController extends Controller
         ]);
     }
 
+    // ── AI context export ─────────────────────────────────────────────────────
+
+    public function context(Request $request): Response
+    {
+        $storageDir = storage_path('app/laravel-brain');
+
+        if (! file_exists($storageDir.'/.graph-all.json')) {
+            return response(
+                'No scan data found — run php artisan brain:scan first',
+                404,
+                ['Content-Type' => 'text/plain']
+            );
+        }
+
+        $nodeId = $request->query('nodeId') ? (string) $request->query('nodeId') : null;
+        $route = $request->query('route') ? (string) $request->query('route') : null;
+        $budget = max(500, min(50000, (int) $request->query('budget', 6000)));
+        $format = in_array($request->query('format', 'markdown'), ['markdown', 'json'], true)
+            ? (string) $request->query('format', 'markdown')
+            : 'markdown';
+
+        $exporter = new ContextExporter($storageDir, base_path());
+
+        try {
+            $output = $exporter->export(
+                nodeId: $nodeId,
+                routeLabel: $route,
+                budget: $budget,
+                format: $format,
+            );
+        } catch (\RuntimeException $e) {
+            return response($e->getMessage(), 400, ['Content-Type' => 'text/plain']);
+        }
+
+        $contentType = $format === 'json'
+            ? 'application/json'
+            : 'text/markdown; charset=utf-8';
+
+        return response($output, 200, ['Content-Type' => $contentType]);
+    }
+
+    // ── AI rules generation ───────────────────────────────────────────────────
+
+    public function generateRules(Request $request): JsonResponse
+    {
+        $storageDir = storage_path('app/laravel-brain');
+
+        if (! file_exists($storageDir.'/.graph-all.json')) {
+            return response()->json([
+                'error' => 'No scan data found — run php artisan brain:scan first',
+            ], 404);
+        }
+
+        $validTargets = array_keys(RulesExporter::TARGETS);
+        $requested = $request->input('targets', $validTargets);
+
+        if (! is_array($requested) || empty($requested)) {
+            $requested = $validTargets;
+        }
+
+        $unknown = array_diff($requested, $validTargets);
+        if (! empty($unknown)) {
+            return response()->json([
+                'error' => 'Unknown target(s): '.implode(', ', $unknown),
+            ], 422);
+        }
+
+        $exporter = new RulesExporter($storageDir, base_path());
+        $results = [];
+
+        foreach ($requested as $target) {
+            $label = RulesExporter::TARGETS[$target]['label'];
+            $destPath = $exporter->targetPath($target);
+            $relative = str_replace(base_path().'/', '', $destPath);
+
+            try {
+                $content = $exporter->generate($target);
+                $dir = dirname($destPath);
+
+                if (! is_dir($dir)) {
+                    mkdir($dir, 0755, true);
+                }
+
+                file_put_contents($destPath, $content);
+
+                $results[] = [
+                    'target' => $target,
+                    'label' => $label,
+                    'path' => $relative,
+                    'success' => true,
+                ];
+            } catch (\Exception $e) {
+                $results[] = [
+                    'target' => $target,
+                    'label' => $label,
+                    'path' => $relative,
+                    'success' => false,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return response()->json(['results' => $results]);
+    }
+
     // ── Stress test ───────────────────────────────────────────────────────────
 
     public function stressTest(Request $request): JsonResponse
@@ -76,6 +183,7 @@ class BrainController extends Controller
             'headers' => 'nullable|array',
             'body' => 'nullable|string',
             'timeout' => 'nullable|numeric|min:1|max:30',
+            'includeCsrf' => 'nullable|boolean',
         ]);
 
         if (! $this->isAllowedHost($validated['url'])) {
@@ -83,6 +191,34 @@ class BrainController extends Controller
                 ['error' => 'URL restricted to localhost, 127.0.0.1, *.test, or *.local'],
                 422
             );
+        }
+
+        if ($validated['includeCsrf'] ?? false) {
+            $headers = $validated['headers'] ?? [];
+            $cookieHeader = $request->header('Cookie', '');
+
+            if (! isset($headers['X-CSRF-TOKEN']) && ! isset($headers['X-XSRF-TOKEN'])) {
+                // The brain routes have no session middleware, so csrf_token() would
+                // return a token for a different session than the browser's.
+                // Instead, extract the XSRF-TOKEN cookie the browser already holds —
+                // it contains the encrypted CSRF token Laravel set for this session.
+                // Sending it as X-XSRF-TOKEN lets Laravel decrypt and verify it normally.
+                foreach (explode(';', $cookieHeader) as $part) {
+                    $part = trim($part);
+                    if (str_starts_with($part, 'XSRF-TOKEN=')) {
+                        $headers['X-XSRF-TOKEN'] = urldecode(substr($part, strlen('XSRF-TOKEN=')));
+                        break;
+                    }
+                }
+            }
+
+            // Forward the full Cookie header so the session can be loaded and
+            // the CSRF token verified against it.
+            if (! isset($headers['Cookie']) && $cookieHeader !== '') {
+                $headers['Cookie'] = $cookieHeader;
+            }
+
+            $validated['headers'] = $headers;
         }
 
         try {

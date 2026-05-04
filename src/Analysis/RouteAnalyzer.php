@@ -108,7 +108,7 @@ class RouteAnalyzer
                 $this->file = $file;
             }
 
-            public function enterNode(Node $node): null
+            public function enterNode(Node $node): ?int
             {
                 // StaticCall: Route::get(), Route::group(), Route::resource()
                 if ($node instanceof Node\Expr\StaticCall) {
@@ -149,7 +149,7 @@ class RouteAnalyzer
                 return null;
             }
 
-            public function leaveNode(Node $node): null
+            public function leaveNode(Node $node): ?int
             {
                 $methodName = null;
                 if ($node instanceof Node\Expr\StaticCall || $node instanceof Node\Expr\MethodCall) {

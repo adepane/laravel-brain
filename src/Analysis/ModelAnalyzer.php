@@ -79,7 +79,7 @@ class ModelAnalyzer
                 $this->useMap = $useMap;
             }
 
-            public function enterNode(Node $node): null
+            public function enterNode(Node $node): ?int
             {
                 // $dispatchesEvents property
                 if ($node instanceof Node\Stmt\Property) {

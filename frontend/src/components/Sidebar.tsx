@@ -73,6 +73,8 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
   const [seqOpen, setSeqOpen] = useState(false)
   const [isSeqModalOpen, setIsSeqModalOpen] = useState(false)
+  const [aiCopied, setAiCopied] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
 
   // Adjust state during render when selection changes (avoids Effect cascading render)
   const [prevSelectedId, setPrevSelectedId] = useState(selectedId)
@@ -84,6 +86,8 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
     setIsSourceModalOpen(false)
     setSeqOpen(false)
     setIsSeqModalOpen(false)
+    setAiCopied(false)
+    setAiLoading(false)
   }
 
   const nodeMap = useMemo(() => {
@@ -120,6 +124,25 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
     if (node?.type !== 'route') return null
     return buildSequenceDiagram(selectedId, graphData)
   }, [selectedId, graphData])
+
+  const handleCopyAiContext = useCallback(async () => {
+    if (!selectedId) return
+    setAiLoading(true)
+    try {
+      const res = await fetch(
+        import.meta.env.BASE_URL + `api/context?nodeId=${encodeURIComponent(selectedId)}&budget=6000`
+      )
+      if (!res.ok) throw new Error('Failed to fetch context')
+      const text = await res.text()
+      await navigator.clipboard.writeText(text)
+      setAiCopied(true)
+      setTimeout(() => setAiCopied(false), 2500)
+    } catch {
+      alert('Could not copy AI context.')
+    } finally {
+      setAiLoading(false)
+    }
+  }, [selectedId])
 
   if (!graphData) return null
 
@@ -188,7 +211,17 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
       <div className="sidebar-drag-handle" onMouseDown={onMouseDown} title="Drag to resize" />
       <div className="sidebar">
         <div className="sidebar-header">
-          <button className="sidebar-close" onClick={onClose}>×</button>
+          <div className="sidebar-header-actions">
+            <button
+              className="flow-popup-btn sidebar-ai-btn"
+              title="Copy AI context to clipboard"
+              onClick={handleCopyAiContext}
+              disabled={aiLoading}
+            >
+              {aiLoading ? '…' : aiCopied ? '✓' : '🤖'}
+            </button>
+            <button className="sidebar-close" onClick={onClose}>×</button>
+          </div>
           <div className="sidebar-badges">
             <span className="type-badge" style={{ backgroundColor: color }}>{node.type}</span>
             {typeof node.data?.visibility === 'string' && (

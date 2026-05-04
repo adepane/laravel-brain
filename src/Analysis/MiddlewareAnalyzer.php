@@ -57,7 +57,7 @@ class MiddlewareAnalyzer
                 $this->useMap = $useMap;
             }
 
-            public function enterNode(Node $node): null
+            public function enterNode(Node $node): ?int
             {
                 if (! $node instanceof Node\Stmt\Property) {
                     return null;
@@ -154,7 +154,7 @@ class MiddlewareAnalyzer
                 $this->useMap = $useMap;
             }
 
-            public function enterNode(Node $node): null
+            public function enterNode(Node $node): ?int
             {
                 if (! $node instanceof Node\Expr\MethodCall) {
                     return null;
