@@ -23,6 +23,7 @@ class AnalysisResult
         public int $totalRoutes,
         public int $totalCommands = 0,
         public int $totalChannels = 0,
+        public int $totalFilamentResources = 0,
     ) {}
 }
 
@@ -42,6 +43,8 @@ class ProjectAnalyzer
 
     private ChannelAnalyzer $channelAnalyzer;
 
+    private FilamentAnalyzer $filamentAnalyzer;
+
     private QueryTracer $queryTracer;
 
     private GraphBuilder $graphBuilder;
@@ -60,6 +63,7 @@ class ProjectAnalyzer
         $this->modelAnalyzer = new ModelAnalyzer;
         $this->consoleAnalyzer = new ConsoleAnalyzer;
         $this->channelAnalyzer = new ChannelAnalyzer;
+        $this->filamentAnalyzer = new FilamentAnalyzer;
         $this->queryTracer = new QueryTracer;
         $this->graphBuilder = new GraphBuilder;
         $this->graphSplitter = new GraphSplitter;
@@ -142,6 +146,30 @@ class ProjectAnalyzer
         }
         $this->emit('step:done', ['step' => 'ch_chains', 'count' => count($channelEdges), 'unit' => 'call edge', 'message' => '    Discovered '.count($channelEdges).' channel call chain edge(s)']);
 
+        $this->emit('step:start', ['step' => 'filament', 'label' => 'Scanning Filament panels', 'message' => '  → Scanning Filament panels...']);
+        $filamentResult = $this->filamentAnalyzer->analyze($projectRoot);
+        $filamentResourceCount = count($filamentResult['resources']);
+        $this->emit('step:done', ['step' => 'filament', 'count' => $filamentResourceCount, 'unit' => 'resource', 'message' => "    Found {$filamentResourceCount} Filament resource(s)"]);
+
+        // Trace call chains from Filament page class methods (same way controller actions are traced)
+        $filamentPageEdges = [];
+        if ($filamentResult['detected'] && ! empty($filamentResult['pages'])) {
+            $this->emit('step:start', ['step' => 'filament_chains', 'label' => 'Tracing Filament page call chains', 'message' => '  → Tracing Filament page call chains...']);
+            $filamentPageDefs = [];
+            foreach ($filamentResult['pages'] as $page) {
+                if ($page->file !== '' && file_exists($page->file)) {
+                    $def = $this->controllerAnalyzer->analyzeFile($page->fqcn, $page->file);
+                    if ($def !== null) {
+                        $filamentPageDefs[$page->fqcn] = $def;
+                    }
+                }
+            }
+            if (! empty($filamentPageDefs)) {
+                $filamentPageEdges = $this->methodTracer->trace($filamentPageDefs, $psr4Map, $projectRoot);
+            }
+            $this->emit('step:done', ['step' => 'filament_chains', 'count' => count($filamentPageEdges), 'unit' => 'call edge', 'message' => '    Discovered '.count($filamentPageEdges).' Filament page call chain edge(s)']);
+        }
+
         $this->emit('step:start', ['step' => 'queries', 'label' => 'Tracing DB queries', 'message' => '  → Tracing DB queries...']);
         $dbQueryMap = $this->queryTracer->buildQueryMap($callChain, $controllers, $psr4Map, $projectRoot);
         $this->emit('step:done', ['step' => 'queries', 'count' => count($dbQueryMap), 'unit' => 'action', 'message' => '    Found DB query info for '.count($dbQueryMap).' action(s)']);
@@ -152,10 +180,28 @@ class ProjectAnalyzer
         );
         $this->graphBuilder->addConsoleCommands($commands, $schedules, $commandEdges);
         $this->graphBuilder->addChannels($channels, $channelEdges);
+        if ($filamentResult['detected']) {
+            $this->graphBuilder->addFilament(
+                $filamentResult['panels'],
+                $filamentResult['resources'],
+                $filamentResult['pages'],
+                $filamentResult['widgets'],
+                $filamentResult['relationManagers'],
+            );
+
+            // Wire page-level call chains (services, models, jobs, events called from page methods)
+            if (! empty($filamentPageEdges)) {
+                $pageNodeIds = [];
+                foreach ($filamentResult['pages'] as $page) {
+                    $pageNodeIds[$page->fqcn] = "filament_page::{$page->fqcn}";
+                }
+                $this->graphBuilder->addFilamentPageCallChain($filamentPageEdges, $pageNodeIds);
+            }
+        }
         $this->emit('step:done', ['step' => 'graph', 'count' => $fullGraph->nodeCount(), 'unit' => 'node', 'extra' => $fullGraph->edgeCount().' edges', 'message' => "    {$fullGraph->nodeCount()} nodes, {$fullGraph->edgeCount()} edges"]);
 
         $this->emit('step:start', ['step' => 'split', 'label' => 'Splitting into tab subgraphs', 'message' => '  → Splitting into tab subgraphs...']);
-        $split = $this->graphSplitter->split($fullGraph, $routes, $commands, $channels, $schedules, $projectName, $analyzedAt);
+        $split = $this->graphSplitter->split($fullGraph, $routes, $commands, $channels, $schedules, $projectName, $analyzedAt, $filamentResult['panels'], $filamentResult['resources'], $filamentResult['pages']);
         $this->emit('step:done', ['step' => 'split', 'count' => count($split['subgraphs']), 'unit' => 'tab', 'message' => '    '.count($split['subgraphs']).' tab(s) generated']);
 
         $manifestJson = $this->graphSplitter->buildManifestJson(
@@ -172,6 +218,7 @@ class ProjectAnalyzer
             totalRoutes: count($routes),
             totalCommands: count($commands),
             totalChannels: count($channels),
+            totalFilamentResources: $filamentResourceCount,
         );
 
         $this->emit('analysis:done', [
@@ -182,6 +229,7 @@ class ProjectAnalyzer
             'models' => count($models),
             'commands' => count($commands),
             'channels' => count($channels),
+            'filamentResources' => $filamentResourceCount,
             'tabs' => count($split['subgraphs']),
         ]);
 

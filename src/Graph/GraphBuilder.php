@@ -9,6 +9,11 @@ use LaraMint\LaravelBrain\Analysis\ChannelDefinition;
 use LaraMint\LaravelBrain\Analysis\ConsoleCommandDefinition;
 use LaraMint\LaravelBrain\Analysis\ControllerDefinition;
 use LaraMint\LaravelBrain\Analysis\DbQuery;
+use LaraMint\LaravelBrain\Analysis\FilamentPageDefinition;
+use LaraMint\LaravelBrain\Analysis\FilamentPanelDefinition;
+use LaraMint\LaravelBrain\Analysis\FilamentRelationManagerDefinition;
+use LaraMint\LaravelBrain\Analysis\FilamentResourceDefinition;
+use LaraMint\LaravelBrain\Analysis\FilamentWidgetDefinition;
 use LaraMint\LaravelBrain\Analysis\FlowExtractor;
 use LaraMint\LaravelBrain\Analysis\MiddlewareRegistry;
 use LaraMint\LaravelBrain\Analysis\ModelDefinition;
@@ -802,6 +807,51 @@ class GraphBuilder
         }
     }
 
+    // ── Filament page call chains ─────────────────────────────────────────────
+
+    /**
+     * Wire call-chain edges discovered by tracing Filament page class methods.
+     *
+     * Each page class is traced like a controller action; the caller node is mapped
+     * to the existing filament_page::{fqcn} node rather than creating a new action
+     * node. Callees (services, models, jobs, events) are created as needed.
+     *
+     * @param  CallChainEdge[]  $edges
+     * @param  array<string, string>  $pageNodeIds  FQCN => "filament_page::{fqcn}"
+     */
+    public function addFilamentPageCallChain(array $edges, array $pageNodeIds): void
+    {
+        foreach ($edges as $edge) {
+            // Prefer the method-level node if it was created in addFilament().
+            // Fall back to the page node, then to the generic hop ID for deep chains.
+            $methodNodeId = $this->filamentPageMethodId($edge->callerFqcn, $edge->callerMethod);
+            if ($this->graph->hasNode($methodNodeId)) {
+                $callerNode = $methodNodeId;
+            } else {
+                $callerNode = $pageNodeIds[$edge->callerFqcn]
+                    ?? $this->nodeIdForHop($edge->callerFqcn, $edge->callerMethod);
+            }
+
+            $calleeNode = $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod);
+
+            // Ensure callee node exists (model, service, job, event, etc.)
+            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $edge->type, []);
+
+            // For intermediate service/repo callers in deep chains
+            if (! $this->graph->hasNode($callerNode) && ! isset($pageNodeIds[$edge->callerFqcn])) {
+                $callerType = $this->classifyFqcn($edge->callerFqcn);
+                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerType, []);
+            }
+
+            $this->addEdge(
+                $callerNode,
+                $calleeNode,
+                $this->edgeLabelForType($edge->type),
+                'filament-page-to-'.$edge->type,
+            );
+        }
+    }
+
     // ── Broadcast channels ────────────────────────────────────────────────────
 
     /**
@@ -883,6 +933,224 @@ class GraphBuilder
     private function eventId(string $fqcn): string
     {
         return "event::{$fqcn}";
+    }
+
+    private function filamentPanelId(string $fqcn): string
+    {
+        return "filament_panel::{$fqcn}";
+    }
+
+    private function filamentResourceId(string $fqcn): string
+    {
+        return "filament_resource::{$fqcn}";
+    }
+
+    private function filamentPageId(string $fqcn): string
+    {
+        return "filament_page::{$fqcn}";
+    }
+
+    private function filamentWidgetId(string $fqcn): string
+    {
+        return "filament_widget::{$fqcn}";
+    }
+
+    private function filamentRelationManagerId(string $fqcn): string
+    {
+        return "filament_relation_manager::{$fqcn}";
+    }
+
+    private function filamentPageMethodId(string $fqcn, string $method): string
+    {
+        return "filament_page_method::{$fqcn}::{$method}";
+    }
+
+    // ── Filament panels ───────────────────────────────────────────────────────
+
+    /**
+     * @param  FilamentPanelDefinition[]  $panels
+     * @param  FilamentResourceDefinition[]  $resources
+     * @param  FilamentPageDefinition[]  $pages
+     * @param  FilamentWidgetDefinition[]  $widgets
+     * @param  FilamentRelationManagerDefinition[]  $relationManagers
+     */
+    public function addFilament(
+        array $panels,
+        array $resources,
+        array $pages,
+        array $widgets,
+        array $relationManagers,
+    ): void {
+        // ── 1. Panel nodes ────────────────────────────────────────────────────
+        foreach ($panels as $panel) {
+            $id = $this->filamentPanelId($panel->fqcn);
+            if (! $this->graph->hasNode($id)) {
+                $this->graph->addNode(new Node($id, 'filament_panel', $panel->id, [
+                    'fqcn' => $panel->fqcn,
+                    'file' => $panel->file,
+                    'path' => $panel->path,
+                    'panelId' => $panel->id,
+                ]));
+            }
+        }
+
+        // ── 2. Resource nodes + per-page route entry-points ───────────────────
+        foreach ($resources as $resource) {
+            $id = $this->filamentResourceId($resource->fqcn);
+            if (! $this->graph->hasNode($id)) {
+                $this->graph->addNode(new Node($id, 'filament_resource', class_basename($resource->fqcn), [
+                    'fqcn' => $resource->fqcn,
+                    'file' => $resource->file,
+                    'modelFqcn' => $resource->modelFqcn,
+                    'panelId' => $resource->panelId,
+                    'route' => $resource->route,
+                ]));
+            }
+
+            // Create a route-type node for each known page (index, create, edit, view)
+            // so that each Filament page gets a graph tab starting from a route node,
+            // mirroring how normal Laravel routes behave.
+            foreach ($resource->pageRoutes as $pageKey => [$method, $path]) {
+                $routeNodeId = "route::{$method}::{$path}";
+                if (! $this->graph->hasNode($routeNodeId)) {
+                    $this->graph->addNode(new Node($routeNodeId, 'route', "{$method} {$path}", [
+                        'method' => $method,
+                        'uri' => $path,
+                        'filament' => true,
+                        'pageType' => $pageKey,
+                        'panelId' => $resource->panelId,
+                        'resourceFqcn' => $resource->fqcn,
+                        'file' => $resource->file,
+                    ]));
+                }
+                $this->addEdge($routeNodeId, $id, 'handles', 'filament-route-to-resource');
+            }
+
+            // If the managed model is not yet in the graph, create a minimal model node
+            if ($resource->modelFqcn !== '') {
+                $modelNodeId = $this->modelId($resource->modelFqcn);
+                if (! $this->graph->hasNode($modelNodeId)) {
+                    $this->graph->addNode(new Node($modelNodeId, 'model', class_basename($resource->modelFqcn), [
+                        'fqcn' => $resource->modelFqcn,
+                        'file' => $this->resolveFile($resource->modelFqcn),
+                        'relationships' => [],
+                    ]));
+                }
+            }
+        }
+
+        // ── 3. Page nodes + per-method child nodes ────────────────────────────
+        foreach ($pages as $page) {
+            $id = $this->filamentPageId($page->fqcn);
+            if (! $this->graph->hasNode($id)) {
+                $this->graph->addNode(new Node($id, 'filament_page', class_basename($page->fqcn), [
+                    'fqcn' => $page->fqcn,
+                    'file' => $page->file,
+                    'pageType' => $page->pageType,
+                    'parentResourceFqcn' => $page->parentResourceFqcn,
+                    ...($page->panelId !== '' ? ['panelId' => $page->panelId] : []),
+                    ...($page->route !== '' ? ['route' => $page->route] : []),
+                ]));
+            }
+
+            // Custom pages (not resource sub-pages) with a computed route get their own
+            // route entry-point node, mirroring how resource page routes work.
+            if ($page->parentResourceFqcn === '' && $page->route !== '') {
+                $routeNodeId = "route::GET::{$page->route}";
+                if (! $this->graph->hasNode($routeNodeId)) {
+                    $this->graph->addNode(new Node($routeNodeId, 'route', "GET {$page->route}", [
+                        'method' => 'GET',
+                        'uri' => $page->route,
+                        'filament' => true,
+                        'pageType' => 'custom',
+                        'panelId' => $page->panelId,
+                        'pageFqcn' => $page->fqcn,
+                        'file' => $page->file,
+                    ]));
+                }
+                $this->addEdge($routeNodeId, $id, 'handles', 'filament-route-to-page');
+            }
+
+            // Create one node per method declared in the page class
+            foreach ($page->methods as $method) {
+                $methodId = $this->filamentPageMethodId($page->fqcn, $method);
+                if (! $this->graph->hasNode($methodId)) {
+                    $flowSteps = $this->extractMethodFlowSteps($page->fqcn, $method);
+                    $metrics = $this->extractMethodMetrics($page->fqcn, $method);
+                    $visibility = $this->extractVisibility($page->fqcn, $method);
+                    $this->graph->addNode(new Node($methodId, 'filament_page_method', $method, [
+                        'fqcn' => $page->fqcn,
+                        'method' => $method,
+                        'file' => $page->file,
+                        'flowSteps' => $flowSteps,
+                        'visibility' => $visibility,
+                        ...($metrics ? ['metrics' => $metrics] : []),
+                        ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
+                        ...($this->isFatMethod($metrics) ? ['fatMethod' => true] : []),
+                    ]));
+                }
+                $this->addEdge($id, $methodId, 'has method', 'filament-page-to-method');
+            }
+        }
+
+        // ── 4. Widget nodes ───────────────────────────────────────────────────
+        foreach ($widgets as $widget) {
+            $id = $this->filamentWidgetId($widget->fqcn);
+            if (! $this->graph->hasNode($id)) {
+                $this->graph->addNode(new Node($id, 'filament_widget', class_basename($widget->fqcn), [
+                    'fqcn' => $widget->fqcn,
+                    'file' => $widget->file,
+                    'widgetType' => $widget->widgetType,
+                ]));
+            }
+        }
+
+        // ── 5. Relation Manager nodes ─────────────────────────────────────────
+        foreach ($relationManagers as $rm) {
+            $id = $this->filamentRelationManagerId($rm->fqcn);
+            if (! $this->graph->hasNode($id)) {
+                $this->graph->addNode(new Node($id, 'filament_relation_manager', class_basename($rm->fqcn), [
+                    'fqcn' => $rm->fqcn,
+                    'file' => $rm->file,
+                    'relationship' => $rm->relationship,
+                    'parentResourceFqcn' => $rm->parentResourceFqcn,
+                ]));
+            }
+        }
+
+        // ── 6. Edges ──────────────────────────────────────────────────────────
+
+        // Panel → Resource
+        foreach ($panels as $panel) {
+            $panelId = $this->filamentPanelId($panel->fqcn);
+            foreach ($panel->resources as $resourceFqcn) {
+                $this->addEdge($panelId, $this->filamentResourceId($resourceFqcn), 'registers', 'filament-panel-to-resource');
+            }
+            // Panel → custom page
+            foreach ($panel->pages as $pageFqcn) {
+                $this->addEdge($panelId, $this->filamentPageId($pageFqcn), 'registers', 'filament-panel-to-page');
+            }
+            // Panel → widget
+            foreach ($panel->widgets as $widgetFqcn) {
+                $this->addEdge($panelId, $this->filamentWidgetId($widgetFqcn), 'registers', 'filament-panel-to-widget');
+            }
+        }
+
+        // Resource → Model
+        foreach ($resources as $resource) {
+            $resourceId = $this->filamentResourceId($resource->fqcn);
+            if ($resource->modelFqcn !== '') {
+                $this->addEdge($resourceId, $this->modelId($resource->modelFqcn), 'manages', 'filament-resource-to-model');
+            }
+            // Resource → Page
+            foreach ($resource->pages as $pageKey => $pageFqcn) {
+                $this->addEdge($resourceId, $this->filamentPageId($pageFqcn), 'has page', 'filament-resource-to-page');
+            }
+            // Resource → Relation Manager
+            foreach ($resource->relations as $rmFqcn) {
+                $this->addEdge($resourceId, $this->filamentRelationManagerId($rmFqcn), 'has relation', 'filament-resource-to-relation');
+            }
+        }
     }
 }
 

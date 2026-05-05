@@ -80,7 +80,7 @@ class ControllerAnalyzer
         return $definitions;
     }
 
-    private function analyzeFile(string $fqcn, string $file): ?ControllerDefinition
+    public function analyzeFile(string $fqcn, string $file): ?ControllerDefinition
     {
         $parsed = $this->parser->parse($file);
         if ($parsed['ast'] === null) {

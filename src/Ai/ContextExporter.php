@@ -11,6 +11,7 @@ class ContextExporter
     private const TYPE_PRIORITY = [
         'route', 'controller', 'action', 'service',
         'model', 'event', 'job', 'command', 'channel', 'schedule', 'middleware',
+        'filament_panel', 'filament_resource', 'filament_page', 'filament_widget', 'filament_relation_manager',
     ];
 
     public function __construct(

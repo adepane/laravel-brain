@@ -33,6 +33,12 @@ const TYPE_COLORS: Record<string, string> = {
   command:    '#14b8a6',
   channel:    '#8b5cf6',
   schedule:   '#f97316',
+  filament_panel:            '#7C3AED',
+  filament_resource:         '#A855F7',
+  filament_page:             '#C084FC',
+  filament_page_method:      '#E879F9',
+  filament_widget:           '#06B6D4',
+  filament_relation_manager: '#0891B2',
 }
 
 export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange }: Props) {
@@ -195,6 +201,8 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
 
   const dbQueries = (node.data?.dbQueries ?? []) as DbQuery[]
 
+  const relationships = (node.data?.relationships ?? []) as Array<{ type: string; related: string }>
+
   const displayData = Object.entries(node.data ?? {}).filter(
     ([key, val]) =>
       key !== 'flowSteps' &&
@@ -203,6 +211,7 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
       key !== 'fatClass' &&
       key !== 'classMetrics' &&
       key !== 'dbQueries' &&
+      key !== 'relationships' &&
       !(Array.isArray(val) && val.length === 0)
   )
 
@@ -376,13 +385,45 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
           </div>
         )}
 
+        {node.type === 'filament_resource' && !!node.data?.route && (
+          <div className="sidebar-section">
+            <h3>Filament URL</h3>
+            <div className="prop-row">
+              <span className="prop-key">route</span>
+              <span className="prop-value" style={{ fontFamily: 'monospace', color: '#A855F7' }}>
+                {String(node.data.route)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {relationships.length > 0 && (
+          <div className="sidebar-section">
+            <h3>Relationships</h3>
+            {relationships.map((rel, i) => (
+              <div key={i} className="prop-row">
+                <span className="prop-key" style={{ color: '#9C27B0' }}>{rel.type}</span>
+                <span className="prop-value">
+                  {rel.related.split('\\').pop() ?? rel.related}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="sidebar-section">
           <h3>Properties</h3>
           {displayData.map(([key, val]) => (
             <div key={key} className="prop-row">
               <span className="prop-key">{key}</span>
               <span className="prop-value">
-                {Array.isArray(val) ? val.join(', ') || '—' : String(val) || '—'}
+                {Array.isArray(val)
+                  ? val.map(item =>
+                      typeof item === 'object' && item !== null
+                        ? Object.values(item as Record<string, unknown>).join(' ')
+                        : String(item)
+                    ).join(', ') || '—'
+                  : String(val) || '—'}
               </span>
             </div>
           ))}

@@ -7,6 +7,11 @@ const NODE_TYPES = [
   { type: 'model', label: 'Model', color: '#F44336' },
   { type: 'event', label: 'Event', color: '#FFD600' },
   { type: 'job', label: 'Job', color: '#607D8B' },
+  { type: 'filament_panel',            label: 'Filament Panel',    color: '#7C3AED' },
+  { type: 'filament_resource',         label: 'Filament Resource', color: '#A855F7' },
+  { type: 'filament_page',             label: 'Filament Page',     color: '#C084FC' },
+  { type: 'filament_widget',           label: 'Filament Widget',   color: '#06B6D4' },
+  { type: 'filament_relation_manager', label: 'Relation Manager',  color: '#0891B2' },
 ]
 
 export function Legend() {

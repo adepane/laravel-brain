@@ -6,6 +6,9 @@ namespace LaraMint\LaravelBrain\Graph;
 
 use LaraMint\LaravelBrain\Analysis\ChannelDefinition;
 use LaraMint\LaravelBrain\Analysis\ConsoleCommandDefinition;
+use LaraMint\LaravelBrain\Analysis\FilamentPageDefinition;
+use LaraMint\LaravelBrain\Analysis\FilamentPanelDefinition;
+use LaraMint\LaravelBrain\Analysis\FilamentResourceDefinition;
 use LaraMint\LaravelBrain\Analysis\RouteDefinition;
 use LaraMint\LaravelBrain\Analysis\ScheduleEntry;
 
@@ -20,6 +23,7 @@ class TabManifestEntry
         public string $file,
         public string $routeFile = '',
         public string $category = 'Route',
+        public string $panelId = '',
     ) {}
 }
 
@@ -32,6 +36,9 @@ class GraphSplitter
      * @param  ConsoleCommandDefinition[]  $commands
      * @param  ChannelDefinition[]  $channels
      * @param  ScheduleEntry[]  $schedules
+     * @param  FilamentPanelDefinition[]  $filamentPanels
+     * @param  FilamentResourceDefinition[]  $filamentResources
+     * @param  FilamentPageDefinition[]  $filamentPages
      * @return array{ subgraphs: array<string, Graph>, manifest: TabManifestEntry[] }
      */
     public function split(
@@ -42,6 +49,9 @@ class GraphSplitter
         array $schedules,
         string $projectName,
         string $analyzedAt,
+        array $filamentPanels = [],
+        array $filamentResources = [],
+        array $filamentPages = [],
     ): array {
         // Group routes by tabGroup
         $routesByTab = [];
@@ -157,6 +167,95 @@ class GraphSplitter
             );
         }
 
+        // ── Filament resource tabs (one per page route, matching normal route behaviour) ──
+        foreach ($filamentResources as $resource) {
+            if (! empty($resource->pageRoutes)) {
+                // Preferred path: one tab per Filament page route (GET /admin/posts, etc.)
+                foreach ($resource->pageRoutes as $pageKey => [$method, $path]) {
+                    $tabLabel = "{$method} {$path}";
+                    $tabId = $this->sanitizeId($tabLabel);
+                    $routeNodeId = "route::{$method}::{$path}";
+
+                    // Seed from the route node (gives: route → resource → model chain)
+                    // AND from the specific page for this route (gives: page → methods → services)
+                    // mirroring how normal routes seed both the route and its action node.
+                    // filament-resource-to-page edges are excluded from fwdAdj so the resource
+                    // does NOT bleed sibling pages into this tab.
+                    $seeds = [$routeNodeId];
+                    if (isset($resource->pages[$pageKey])) {
+                        $seeds[] = "filament_page::{$resource->pages[$pageKey]}";
+                    }
+
+                    $subgraph = $this->extractSubgraphForward($fullGraph, $fwdAdj, $seeds, $projectName, $analyzedAt);
+                    $subgraphs[$tabId] = $subgraph;
+
+                    $manifest[] = new TabManifestEntry(
+                        id: $tabId,
+                        label: $tabLabel,
+                        routeCount: 1,
+                        nodeCount: $subgraph->nodeCount(),
+                        edgeCount: $subgraph->edgeCount(),
+                        file: ".graph-{$tabId}.json",
+                        routeFile: $resource->route !== '' ? $resource->route : $this->relativeRouteFile($resource->file),
+                        category: 'Filament',
+                        panelId: $resource->panelId,
+                    );
+                }
+            } else {
+                // Fallback: panel path unknown, show one tab seeded from the resource node
+                $resourceNodeId = "filament_resource::{$resource->fqcn}";
+                $shortName = str_replace('Resource', '', ltrim(strrchr($resource->fqcn, '\\') ?: $resource->fqcn, '\\'));
+                $tabId = $this->sanitizeId('filament-resource-'.$resource->fqcn);
+
+                $subgraph = $this->extractSubgraphForward($fullGraph, $fwdAdj, [$resourceNodeId], $projectName, $analyzedAt);
+                $subgraphs[$tabId] = $subgraph;
+
+                $manifest[] = new TabManifestEntry(
+                    id: $tabId,
+                    label: $shortName,
+                    routeCount: 1,
+                    nodeCount: $subgraph->nodeCount(),
+                    edgeCount: $subgraph->edgeCount(),
+                    file: ".graph-{$tabId}.json",
+                    routeFile: $this->relativeRouteFile($resource->file),
+                    category: 'Filament',
+                    panelId: $resource->panelId,
+                );
+            }
+        }
+
+        // ── Filament custom-page tabs (non-resource pages with a computed route) ──
+        // These give panels like "App Panel" visibility in the sidebar even when
+        // they have no resources (e.g. Settings, RegisterTeam, Dashboard pages).
+        foreach ($filamentPages as $page) {
+            if ($page->parentResourceFqcn !== '' || $page->route === '') {
+                continue; // resource sub-pages are already covered via their resource
+            }
+            $tabLabel = "GET {$page->route}";
+            $tabId = $this->sanitizeId($tabLabel);
+            if (isset($subgraphs[$tabId])) {
+                continue; // already created (e.g. collision with a resource route)
+            }
+            $routeNodeId = "route::GET::{$page->route}";
+            $pageNodeId = "filament_page::{$page->fqcn}";
+
+            $seeds = [$routeNodeId, $pageNodeId];
+            $subgraph = $this->extractSubgraphForward($fullGraph, $fwdAdj, $seeds, $projectName, $analyzedAt);
+            $subgraphs[$tabId] = $subgraph;
+
+            $manifest[] = new TabManifestEntry(
+                id: $tabId,
+                label: $tabLabel,
+                routeCount: 1,
+                nodeCount: $subgraph->nodeCount(),
+                edgeCount: $subgraph->edgeCount(),
+                file: ".graph-{$tabId}.json",
+                routeFile: $page->route,
+                category: 'Filament',
+                panelId: $page->panelId,
+            );
+        }
+
         return ['subgraphs' => $subgraphs, 'manifest' => $manifest];
     }
 
@@ -169,7 +268,7 @@ class GraphSplitter
     ): string {
         $tabs = [];
         foreach ($manifest as $entry) {
-            $tabs[] = [
+            $tab = [
                 'id' => $entry->id,
                 'label' => $entry->label,
                 'routeCount' => $entry->routeCount,
@@ -179,6 +278,10 @@ class GraphSplitter
                 'routeFile' => $entry->routeFile,
                 'category' => $entry->category,
             ];
+            if ($entry->panelId !== '') {
+                $tab['panelId'] = $entry->panelId;
+            }
+            $tabs[] = $tab;
         }
 
         $json = json_encode([
@@ -200,20 +303,27 @@ class GraphSplitter
     // ── Private helpers ────────────────────────────────────────────────────
 
     /**
-     * Forward-only adjacency, EXCLUDING controller-to-action edges.
+     * Forward-only adjacency, excluding "fan-out" edges that would pull sibling
+     * nodes into every consumer's subgraph.
      *
-     * Why exclude controller-to-action?
-     *   UserController has edges to ALL its actions (index, store, show, update, destroy).
-     *   If we follow those forward, every route that calls UserController would pull in
-     *   ALL actions, not just its own. By excluding these edges, each route's BFS
-     *   only reaches its own action (because we seed directly from the action node).
+     * Excluded edge types and the reason:
+     *
+     *  controller-to-action      — UserController has edges to ALL its actions.
+     *                              We seed from the specific action directly instead.
+     *
+     *  filament-resource-to-page — A resource registers ALL its pages (index, create,
+     *                              edit, view). We seed from the specific page for
+     *                              each route tab directly, so other pages must not
+     *                              bleed in via the shared resource node.
      */
     private function buildForwardAdjacency(Graph $fullGraph): array
     {
         $adj = [];
         foreach ($fullGraph->edges() as $edge) {
-            // Skip the controller→action fan-out edge; we seed from action directly
             if ($edge->type === 'controller-to-action') {
+                continue;
+            }
+            if ($edge->type === 'filament-resource-to-page') {
                 continue;
             }
 

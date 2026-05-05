@@ -15,6 +15,7 @@ import './App.css'
 const ALL_TYPES: GraphNode['type'][] = [
   'route', 'middleware', 'controller', 'action', 'service', 'model', 'event', 'job',
   'command', 'channel', 'schedule',
+  'filament_panel', 'filament_resource', 'filament_page', 'filament_page_method', 'filament_widget', 'filament_relation_manager',
 ]
 
 // Node types that should have their methods expanded on first click
@@ -125,6 +126,14 @@ export default function App() {
         key = 'Broadcast Channels'
       } else if (tab.category === 'Schedule') {
         key = 'Schedules'
+      } else if (tab.category === 'Filament') {
+        // One file-group per Filament panel, named after its Panel Provider.
+        // e.g. panelId="admin" → "Admin Panel", panelId="app" → "App Panel"
+        const panelId = tab.panelId ?? ''
+        const panelLabel = panelId
+          ? panelId.charAt(0).toUpperCase() + panelId.slice(1) + ' Panel'
+          : 'Filament'
+        key = `Filament · ${panelLabel}`
       } else {
         key = tab.routeFile ?? 'routes.php'
       }
@@ -148,7 +157,13 @@ export default function App() {
           let prefix: string
           if (isHttp) {
             const uri = tab.label.replace(/^[A-Z]+\s+/, '')
-            prefix = uri.split('/').filter(Boolean)[0] ?? '/'
+            const segments = uri.split('/').filter(Boolean)
+            // Filament routes: group by the FIRST URL segment (the resource domain, e.g.
+            // "shop" from "/shop/products", "hr" from "/hr/employees").  Because resources
+            // are already scoped to their panel group (file group), this gives a clean
+            // second-level grouping: Admin Panel → shop → products/orders/…
+            // Regular routes: group by first path segment (e.g. "api" from "/api/users").
+            prefix = segments[0] ?? '/'
           } else {
             // Commands/channels: group by the part before the first colon or slash,
             // or use '_flat' sentinel to render them without a prefix wrapper.

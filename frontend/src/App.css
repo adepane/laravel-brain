@@ -2539,3 +2539,82 @@ body {
   color: rgba(255,255,255,0.4);
 }
 
+
+/* ── Collapse / expand toggle button (rendered inside each parent node) ─── */
+.collapse-toggle-btn {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  z-index: 50;
+  pointer-events: all;
+  user-select: none;
+  transform: translate(-50%, -50%);
+  background: rgba(40, 42, 54, 0.92);
+  border: 1.25px solid rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  transition: transform 0.12s ease-out, background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+  will-change: transform, left, top;
+}
+
+.collapse-toggle-btn:hover {
+  transform: translate(-50%, -50%) scale(1.25);
+  background: #7c3aed;
+  border-color: #c4b5fd;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.collapse-toggle-btn--collapsed {
+  background: #7c3aed;
+  border-color: #c4b5fd;
+  color: #ffffff;
+  box-shadow: 0 1px 4px rgba(124, 58, 237, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.collapse-toggle-btn--collapsed:hover {
+  background: #8b5cf6;
+  border-color: #ffffff;
+}
+
+.collapse-toggle-btn--dimmed {
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+[data-theme="light"] .collapse-toggle-btn {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 0, 0, 0.25);
+  color: rgba(0, 0, 0, 0.7);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+[data-theme="light"] .collapse-toggle-btn:hover {
+  background: #7c3aed;
+  border-color: #5b21b6;
+  color: #ffffff;
+}
+
+[data-theme="light"] .collapse-toggle-btn--collapsed {
+  background: #7c3aed;
+  border-color: #5b21b6;
+  color: #ffffff;
+}
+
+.collapse-toggle-btn svg {
+  display: block;
+  width: 8px;
+  height: 8px;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  fill: none;
+  pointer-events: none;
+}
+

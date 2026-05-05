@@ -12,6 +12,12 @@ const NODE_TYPES: { type: GraphNode['type']; label: string; color: string }[] = 
   { type: 'command',    label: 'Commands',    color: '#14b8a6' },
   { type: 'channel',    label: 'Channels',    color: '#8b5cf6' },
   { type: 'schedule',   label: 'Schedules',   color: '#f97316' },
+  { type: 'filament_panel',            label: 'Filament Panels',    color: '#7C3AED' },
+  { type: 'filament_resource',         label: 'Filament Resources', color: '#A855F7' },
+  { type: 'filament_page',             label: 'Filament Pages',     color: '#C084FC' },
+  { type: 'filament_page_method',      label: 'Page Methods',       color: '#E879F9' },
+  { type: 'filament_widget',           label: 'Filament Widgets',   color: '#06B6D4' },
+  { type: 'filament_relation_manager', label: 'Relation Managers',  color: '#0891B2' },
 ]
 
 interface Props {

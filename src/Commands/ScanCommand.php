@@ -150,7 +150,7 @@ class ScanCommand extends Command
         if ($verbose) {
             $elapsed = microtime(true) - $totalStart;
             $this->newLine();
-            $this->renderSummary($result->fullGraph->nodeCount(), $result->fullGraph->edgeCount(), $result->totalRoutes, $result->totalCommands, $result->totalChannels, $elapsed);
+            $this->renderSummary($result->fullGraph->nodeCount(), $result->fullGraph->edgeCount(), $result->totalRoutes, $result->totalCommands, $result->totalChannels, $result->totalFilamentResources, $elapsed);
             $url = rtrim(config('app.url', 'http://localhost'), '/').'/_laravel-brain';
             $this->newLine();
             $this->line("  Open the viewer: <fg=cyan;options=bold>{$url}</>");
@@ -231,7 +231,7 @@ class ScanCommand extends Command
         $this->line('  <fg=magenta;options=bold>└─────────────────────────────────────────┘</>');
     }
 
-    private function renderSummary(int $nodes, int $edges, int $routes, int $commands, int $channels, float $elapsed): void
+    private function renderSummary(int $nodes, int $edges, int $routes, int $commands, int $channels, int $filamentResources, float $elapsed): void
     {
         $this->line('  <fg=gray>─────────────────────────────────────────</>');
         $this->line('  <options=bold>Summary</>');
@@ -243,8 +243,13 @@ class ScanCommand extends Command
             ['Routes',     "<fg=cyan>{$routes}</>"],
             ['Commands',   "<fg=cyan>{$commands}</>"],
             ['Channels',   "<fg=cyan>{$channels}</>"],
-            ['Total time', '<fg=yellow>'.number_format($elapsed, 2).'s</>'],
         ];
+
+        if ($filamentResources > 0) {
+            $rows[] = ['Filament Res.', "<fg=cyan>{$filamentResources}</>"];
+        }
+
+        $rows[] = ['Total time', '<fg=yellow>'.number_format($elapsed, 2).'s</>'];
 
         foreach ($rows as [$label, $value]) {
             $this->line(sprintf('    <fg=gray>%-14s</> %s', $label, $value));

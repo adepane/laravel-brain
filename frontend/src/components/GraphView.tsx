@@ -676,7 +676,6 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
 
           cy.boxSelectionEnabled(false)
 
-          // Node tap: highlight edges + select
           cy.on('tap', 'node', (evt) => {
             const node = evt.target
             cy.elements().removeClass('highlighted')
