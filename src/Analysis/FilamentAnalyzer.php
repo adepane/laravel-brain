@@ -279,7 +279,7 @@ class FilamentAnalyzer
                 return null;
             }
 
-            public function afterTraverse(array $nodes): array|null
+            public function afterTraverse(array $nodes): ?array
             {
                 if ($this->className === '') {
                     return null;
@@ -583,7 +583,7 @@ class FilamentAnalyzer
                 return null;
             }
 
-            public function afterTraverse(array $nodes): array|null
+            public function afterTraverse(array $nodes): ?array
             {
                 if ($this->className === '' || ! $this->isResource) {
                     return null;
@@ -850,7 +850,7 @@ class FilamentAnalyzer
                 return null;
             }
 
-            public function afterTraverse(array $nodes): array|null
+            public function afterTraverse(array $nodes): ?array
             {
                 if ($this->className === '') {
                     return null;
@@ -1030,7 +1030,7 @@ class FilamentAnalyzer
                 return null;
             }
 
-            public function afterTraverse(array $nodes): array|null
+            public function afterTraverse(array $nodes): ?array
             {
                 if ($this->className === '') {
                     return null;
@@ -1145,7 +1145,7 @@ class FilamentAnalyzer
                 return null;
             }
 
-            public function afterTraverse(array $nodes): array|null
+            public function afterTraverse(array $nodes): ?array
             {
                 if ($this->className === '' || $this->parentClass !== 'RelationManager') {
                     return null;
