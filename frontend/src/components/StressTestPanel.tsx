@@ -388,6 +388,11 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
               />
             </div>
 
+            <div className="st-docker-hint">
+              <strong>Docker?</strong> The stress test runs <em>inside</em> the container — <code>localhost:8080</code> is the host-side port and won't be reachable there.
+              Change Base URL to the internal service address, e.g. <code>http://nginx</code> or <code>http://localhost:80</code>.
+            </div>
+
             <div className="st-form-row">
               <span className="st-label">Target</span>
               <span className="st-uri-preview">

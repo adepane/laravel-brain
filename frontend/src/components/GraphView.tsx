@@ -6,9 +6,12 @@ import {
   LARGE_GRAPH_THRESHOLD,
   PACKET_ANIMATION_THRESHOLD,
   ACCENT_COLORS,
+  ACCENT_COLORS_LIGHT,
   BG_COLORS,
+  BG_COLORS_LIGHT,
   HIGHLIGHT_COLOR,
   CC_TIERS,
+  CC_TIERS_LIGHT,
 } from '../utils/graphConstants'
 import {
   type LayoutEdge,
@@ -203,12 +206,17 @@ function cardColors(
   stN: boolean,
 ): { bg: string; border: string; borderW: number; accent: string } {
   const type = String(n.data.type ?? '')
-  const accent = ACCENT_COLORS[type] ?? (dark ? '#c9d1d9' : '#333')
-  const bg = BG_COLORS[type] ?? (dark ? '#0d1117' : '#ffffff')
+  const accent = dark
+    ? (ACCENT_COLORS[type] ?? '#c9d1d9')
+    : (ACCENT_COLORS_LIGHT[type] ?? '#333')
+  const bg = dark
+    ? (BG_COLORS[type] ?? '#0d1117')
+    : (BG_COLORS_LIGHT[type] ?? '#ffffff')
   const cc = Number(n.data.metrics_cc ?? 0) || 0
 
   if (complexityOverlay) {
-    const tier = CC_TIERS.find((t) => cc >= t.min && cc <= t.max) ?? CC_TIERS[0]
+    const tiers = dark ? CC_TIERS : CC_TIERS_LIGHT
+    const tier = tiers.find((t) => cc >= t.min && cc <= t.max) ?? tiers[0]
     const border = stN ? '#a855f7' : n.data.hasN1 ? '#F44336' : tier.border
     return { bg: tier.fill, border, borderW: 1.5, accent: tier.border }
   }

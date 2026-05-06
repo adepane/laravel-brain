@@ -3,6 +3,10 @@ import { FilterPanel } from './FilterPanel'
 import { ComplexityPanel } from './ComplexityPanel'
 import type { TabEntry, GraphData } from '../types/graph'
 
+const MIN_WIDTH = 160
+const MAX_WIDTH = 480
+const DEFAULT_WIDTH = 240
+
 interface PrefixGroup {
   prefix: string
   tabs: TabEntry[]
@@ -73,10 +77,40 @@ export function LeftSidebar({
 }: Props) {
   const [leftTab, setLeftTab] = useState<'routes' | 'complexity'>('routes')
   const [topHeight, setTopHeight] = useState(320)
+  const [width, setWidth] = useState(DEFAULT_WIDTH)
   const [search, setSearch] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
   const dragStartY = useRef(0)
   const dragStartHeight = useRef(0)
+  const isDraggingWidth = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(DEFAULT_WIDTH)
+
+  const onWidthMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDraggingWidth.current = true
+    startX.current = e.clientX
+    startWidth.current = width
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingWidth.current) return
+      const delta = ev.clientX - startX.current
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+      setWidth(next)
+    }
+    const onUp = () => {
+      isDraggingWidth.current = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [width])
 
   // Track expanded state (collapsed by default)
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
@@ -138,6 +172,7 @@ export function LeftSidebar({
   }, [fileGroups, search])
 
   return (
+    <div className="left-sidebar-resizable" style={{ width }}>
     <div className="left-sidebar" ref={containerRef}>
       <div className="left-sidebar-tabs">
         <button
@@ -264,6 +299,8 @@ export function LeftSidebar({
           onHideAll={onHideAll}
         />
       </div>
+    </div>
+    <div className="left-sidebar-drag-handle" onMouseDown={onWidthMouseDown} title="Drag to resize" />
     </div>
   )
 }

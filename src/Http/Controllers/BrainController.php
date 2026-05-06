@@ -294,19 +294,55 @@ class BrainController extends Controller
 
     /**
      * Restrict stress-test targets to development hosts only.
+     *
+     * In Docker the browser URL uses an external mapped port (e.g. localhost:8080)
+     * but the subprocess runs inside the container where that port does not exist.
+     * Users must point the Base URL at the internal service name (e.g. http://nginx).
+     * We allow any host that looks like a private/internal network name:
+     *   • classic localhost aliases
+     *   • *.test / *.local (Herd, Valet, Herd Pro)
+     *   • *.ddev.site (DDEV — DNS resolves inside the DDEV web container)
+     *   • private IPv4 ranges (10.x, 172.16-31.x, 192.168.x)
+     *   • single-label hostnames (Docker service names: nginx, app, web, …)
+     *   • whatever host APP_URL is configured to
      */
     private function isAllowedHost(string $url): bool
     {
         $host = (string) parse_url($url, PHP_URL_HOST);
-        $allowedHosts = ['localhost', '127.0.0.1', '::1', '0.0.0.0'];
-        $allowedSuffixes = ['.test', '.local'];
 
-        return in_array($host, $allowedHosts, true)
-            || array_reduce(
-                $allowedSuffixes,
-                fn ($carry, $suffix) => $carry || str_ends_with($host, $suffix),
-                false
-            );
+        $allowedHosts = ['localhost', '127.0.0.1', '::1', '0.0.0.0'];
+        $allowedSuffixes = ['.test', '.local', '.ddev.site'];
+
+        if (in_array($host, $allowedHosts, true)) {
+            return true;
+        }
+
+        foreach ($allowedSuffixes as $suffix) {
+            if (str_ends_with($host, $suffix)) {
+                return true;
+            }
+        }
+
+        // Docker service names are single-label (no dots): nginx, app, web, php …
+        if (! str_contains($host, '.')) {
+            return true;
+        }
+
+        // Private IPv4 ranges used by Docker networks
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            [$a, $b] = array_map('intval', explode('.', $host));
+            if ($a === 10
+                || ($a === 172 && $b >= 16 && $b <= 31)
+                || ($a === 192 && $b === 168)
+            ) {
+                return true;
+            }
+        }
+
+        // Host configured in APP_URL (covers custom dev domains and Docker setups)
+        $appHost = (string) parse_url((string) config('app.url', ''), PHP_URL_HOST);
+
+        return $appHost !== '' && $host === $appHost;
     }
 
     /**
