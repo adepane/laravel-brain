@@ -22,9 +22,17 @@ class ChannelAnalyzer
 {
     private PhpFileParser $parser;
 
-    public function __construct()
+    /** @var string[] */
+    private array $channelPaths;
+
+    /**
+     * @param  string[]  $channelPaths  Glob patterns relative to the project root.
+     *                                  Only files whose basename contains "channel" are parsed.
+     */
+    public function __construct(array $channelPaths = ['routes/*/*.php'])
     {
         $this->parser = new PhpFileParser;
+        $this->channelPaths = $channelPaths ?: ['routes/*/*.php'];
     }
 
     /**
@@ -33,36 +41,60 @@ class ChannelAnalyzer
     public function analyze(string $projectRoot): array
     {
         $channels = [];
+        $root = rtrim($projectRoot, '/');
 
-        $channelsDir = $projectRoot.'/routes';
-        if (! is_dir($channelsDir)) {
-            return [];
-        }
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($channelsDir, \FilesystemIterator::SKIP_DOTS)
-        );
-
-        foreach ($iterator as $entry) {
-            if (! $entry->isFile() || $entry->getExtension() !== 'php') {
-                continue;
-            }
-            if (! str_contains(strtolower($entry->getBasename()), 'channel')) {
+        foreach ($this->channelPaths as $pattern) {
+            $baseDir = $this->resolveBaseDir($root, $pattern);
+            if (! is_dir($baseDir)) {
                 continue;
             }
 
-            $parsed = $this->parser->parse($entry->getPathname());
-            if (! $parsed || ! $parsed['ast']) {
-                continue;
-            }
-
-            $channels = array_merge(
-                $channels,
-                $this->extractChannels($parsed['ast'], $parsed['useMap'], $entry->getPathname())
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($baseDir, \FilesystemIterator::SKIP_DOTS)
             );
+
+            foreach ($iterator as $entry) {
+                if (! $entry->isFile() || $entry->getExtension() !== 'php') {
+                    continue;
+                }
+                if (! str_contains(strtolower($entry->getBasename()), 'channel')) {
+                    continue;
+                }
+
+                $parsed = $this->parser->parse($entry->getPathname());
+                if (! $parsed || ! $parsed['ast']) {
+                    continue;
+                }
+
+                $channels = array_merge(
+                    $channels,
+                    $this->extractChannels($parsed['ast'], $parsed['useMap'], $entry->getPathname())
+                );
+            }
         }
 
         return $channels;
+    }
+
+    private function resolveBaseDir(string $root, string $pattern): string
+    {
+        $segments = explode('/', ltrim($pattern, '/'));
+        $fixed = [];
+
+        foreach ($segments as $segment) {
+            if (str_contains($segment, '*') || str_contains($segment, '?') || str_contains($segment, '[')) {
+                break;
+            }
+            $fixed[] = $segment;
+        }
+
+        if (! empty($fixed) && str_ends_with(end($fixed), '.php')) {
+            array_pop($fixed);
+        }
+
+        $subPath = implode('/', $fixed);
+
+        return $subPath !== '' ? $root.'/'.$subPath : $root;
     }
 
     private function extractChannels(array $ast, array $useMap, string $file): array

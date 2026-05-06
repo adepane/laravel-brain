@@ -34,9 +34,29 @@ class ConsoleAnalyzer
 {
     private PhpFileParser $parser;
 
-    public function __construct()
-    {
+    /** @var string[] */
+    private array $consoleRoutePaths;
+
+    /** @var string[] */
+    private array $classPaths;
+
+    /** @var string[] */
+    private array $kernelPaths;
+
+    /**
+     * @param  string[]  $consoleRoutePaths  Glob patterns for closure-command route files (basename must contain "console").
+     * @param  string[]  $classPaths         Glob patterns for directories containing Command classes.
+     * @param  string[]  $kernelPaths        Glob patterns pointing to Console Kernel file(s).
+     */
+    public function __construct(
+        array $consoleRoutePaths = ['routes/*/*.php'],
+        array $classPaths = ['app/Console/Commands/*/*.php'],
+        array $kernelPaths = ['app/Console/Kernel.php'],
+    ) {
         $this->parser = new PhpFileParser;
+        $this->consoleRoutePaths = $consoleRoutePaths ?: ['routes/*/*.php'];
+        $this->classPaths = $classPaths ?: ['app/Console/Commands/*/*.php'];
+        $this->kernelPaths = $kernelPaths ?: ['app/Console/Kernel.php'];
     }
 
     /**
@@ -46,26 +66,33 @@ class ConsoleAnalyzer
     {
         $commands = [];
         $schedule = [];
+        $root = rtrim($projectRoot, '/');
 
-        // 1. routes/console.php (and any file with "console" in its name)
-        foreach ($this->findFilesContaining($projectRoot.'/routes', 'console') as $file) {
-            $result = $this->parseConsoleRouteFile($file);
-            $commands = array_merge($commands, $result['commands']);
-            $schedule = array_merge($schedule, $result['schedule']);
+        // 1. Closure-based commands: files containing "console" in their basename
+        foreach ($this->consoleRoutePaths as $pattern) {
+            $baseDir = $this->resolveBaseDir($root, $pattern);
+            foreach ($this->findFilesContaining($baseDir, 'console') as $file) {
+                $result = $this->parseConsoleRouteFile($file);
+                $commands = array_merge($commands, $result['commands']);
+                $schedule = array_merge($schedule, $result['schedule']);
+            }
         }
 
-        // 2. app/Console/Commands/** — command classes
-        $commandsDir = $projectRoot.'/app/Console/Commands';
-        if (is_dir($commandsDir)) {
-            $commands = array_merge($commands, $this->scanCommandClasses($commandsDir));
+        // 2. Command classes
+        foreach ($this->classPaths as $pattern) {
+            $commandsDir = $this->resolveBaseDir($root, $pattern);
+            if (is_dir($commandsDir)) {
+                $commands = array_merge($commands, $this->scanCommandClasses($commandsDir));
+            }
         }
 
-        // 3. app/Console/Kernel.php — $commands property + schedule() method
-        $kernelFile = $projectRoot.'/app/Console/Kernel.php';
-        if (file_exists($kernelFile)) {
-            $result = $this->parseKernel($kernelFile);
-            $commands = array_merge($commands, $result['commands']);
-            $schedule = array_merge($schedule, $result['schedule']);
+        // 3. Kernel.php — $commands property + schedule() method
+        foreach ($this->kernelPaths as $pattern) {
+            foreach ($this->resolveKernelFiles($root, $pattern) as $kernelFile) {
+                $result = $this->parseKernel($kernelFile);
+                $commands = array_merge($commands, $result['commands']);
+                $schedule = array_merge($schedule, $result['schedule']);
+            }
         }
 
         // Deduplicate: class/route-sourced entries win over kernel entries.
@@ -466,5 +493,59 @@ class ConsoleAnalyzer
         }
 
         return $files;
+    }
+
+    /**
+     * Resolves kernel file(s) from a pattern.
+     * Patterns without wildcards are treated as literal paths.
+     * Patterns with wildcards scan the resolved base dir for matching .php files.
+     *
+     * @return string[]
+     */
+    private function resolveKernelFiles(string $root, string $pattern): array
+    {
+        if (! str_contains($pattern, '*') && ! str_contains($pattern, '?') && ! str_contains($pattern, '[')) {
+            $path = $root.'/'.ltrim($pattern, '/');
+
+            return file_exists($path) ? [$path] : [];
+        }
+
+        $baseDir = $this->resolveBaseDir($root, $pattern);
+        if (! is_dir($baseDir)) {
+            return [];
+        }
+
+        $files = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($baseDir, \FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($iterator as $entry) {
+            if ($entry->isFile() && $entry->getExtension() === 'php') {
+                $files[] = $entry->getPathname();
+            }
+        }
+
+        return $files;
+    }
+
+    private function resolveBaseDir(string $root, string $pattern): string
+    {
+        $segments = explode('/', ltrim($pattern, '/'));
+        $fixed = [];
+
+        foreach ($segments as $segment) {
+            if (str_contains($segment, '*') || str_contains($segment, '?') || str_contains($segment, '[')) {
+                break;
+            }
+            $fixed[] = $segment;
+        }
+
+        if (! empty($fixed) && str_ends_with(end($fixed), '.php')) {
+            array_pop($fixed);
+        }
+
+        $subPath = implode('/', $fixed);
+
+        return $subPath !== '' ? $root.'/'.$subPath : $root;
     }
 }

@@ -30,9 +30,17 @@ class RouteAnalyzer
 {
     private PhpFileParser $parser;
 
-    public function __construct()
+    /** @var string[] */
+    private array $routePaths;
+
+    /**
+     * @param  string[]  $routePaths  Glob patterns relative to the project root.
+     *                                Defaults to ['routes/*\/*.php'].
+     */
+    public function __construct(array $routePaths = ['routes/*/*.php'])
     {
         $this->parser = new PhpFileParser;
+        $this->routePaths = $routePaths ?: ['routes/*/*.php'];
     }
 
     /**
@@ -57,23 +65,57 @@ class RouteAnalyzer
 
     private function findRouteFiles(string $projectRoot): array
     {
-        $routesDir = rtrim($projectRoot, '/').'/routes';
-        if (! is_dir($routesDir)) {
-            return [];
-        }
-
+        $root = rtrim($projectRoot, '/');
         $files = [];
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($routesDir, \FilesystemIterator::SKIP_DOTS)
-        );
 
-        foreach ($iterator as $entry) {
-            if ($entry->isFile() && $entry->getExtension() === 'php') {
-                $files[] = $entry->getPathname();
+        foreach ($this->routePaths as $pattern) {
+            $baseDir = $this->resolveBaseDir($root, $pattern);
+
+            if (! is_dir($baseDir)) {
+                continue;
+            }
+
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($baseDir, \FilesystemIterator::SKIP_DOTS)
+            );
+
+            foreach ($iterator as $entry) {
+                if ($entry->isFile() && $entry->getExtension() === 'php') {
+                    $files[] = $entry->getPathname();
+                }
             }
         }
 
-        return $files;
+        return array_unique($files);
+    }
+
+    /**
+     * Extracts the fixed directory prefix from a glob pattern.
+     *
+     * For 'routes/*\/*.php'  → '{root}/routes'
+     * For '*\/*\/*.php'      → '{root}'
+     * For 'app/routes/*.php' → '{root}/app/routes'
+     */
+    private function resolveBaseDir(string $root, string $pattern): string
+    {
+        $segments = explode('/', ltrim($pattern, '/'));
+        $fixed = [];
+
+        foreach ($segments as $segment) {
+            if (str_contains($segment, '*') || str_contains($segment, '?') || str_contains($segment, '[')) {
+                break;
+            }
+            $fixed[] = $segment;
+        }
+
+        // Drop trailing filename segment (e.g. '*.php') if all segments were literal
+        if (! empty($fixed) && str_ends_with(end($fixed), '.php')) {
+            array_pop($fixed);
+        }
+
+        $subPath = implode('/', $fixed);
+
+        return $subPath !== '' ? $root.'/'.$subPath : $root;
     }
 
     /**

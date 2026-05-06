@@ -56,13 +56,23 @@ class ProjectAnalyzer
 
     public function __construct()
     {
-        $this->routeAnalyzer = new RouteAnalyzer;
+        $routePaths = config('laravel-brain.route_paths', ['routes/*/*.php']);
+        $this->routeAnalyzer = new RouteAnalyzer($routePaths);
+
+        $channelPaths = config('laravel-brain.channel_paths', ['routes/*/*.php']);
+        $this->channelAnalyzer = new ChannelAnalyzer($channelPaths);
+
+        $cmdConfig = config('laravel-brain.commands', []);
+        $this->consoleAnalyzer = new ConsoleAnalyzer(
+            consoleRoutePaths: $cmdConfig['console_route_paths'] ?? ['routes/*/*.php'],
+            classPaths: $cmdConfig['class_paths'] ?? ['app/Console/Commands/*/*.php'],
+            kernelPaths: $cmdConfig['kernel_paths'] ?? ['app/Console/Kernel.php'],
+        );
+
         $this->middlewareAnalyzer = new MiddlewareAnalyzer;
         $this->controllerAnalyzer = new ControllerAnalyzer;
         $this->methodTracer = new MethodTracer;
         $this->modelAnalyzer = new ModelAnalyzer;
-        $this->consoleAnalyzer = new ConsoleAnalyzer;
-        $this->channelAnalyzer = new ChannelAnalyzer;
         $this->filamentAnalyzer = new FilamentAnalyzer;
         $this->queryTracer = new QueryTracer;
         $this->graphBuilder = new GraphBuilder;
