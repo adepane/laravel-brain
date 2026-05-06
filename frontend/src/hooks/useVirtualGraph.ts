@@ -1,12 +1,12 @@
 import { useEffect, useState, useMemo } from 'react'
-import type { ElementDefinition } from 'cytoscape'
+import type { GraphElement } from '../types/graph'
 
 /**
  * useVirtualGraph
- * For very large graphs, we don't want to dump 1000+ elements into Cytoscape at once.
+ * For very large graphs, we don't want to dump 1000+ elements into the view at once.
  * This hook progressively adds elements to the graph in chunks.
  */
-export function useVirtualGraph(elements: ElementDefinition[], threshold = 300) {
+export function useVirtualGraph(elements: GraphElement[], threshold = 300) {
   const [limit, setLimit] = useState(threshold)
 
   // Adjust state during render if elements change (avoids Effect cascading render)

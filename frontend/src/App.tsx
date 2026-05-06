@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from 'react'
-import type { Core } from 'cytoscape'
+import type { GraphViewportRef } from './types/graph'
 import { useManifest } from './hooks/useManifest'
 import { useTabGraph } from './hooks/useTabGraph'
 import { useVirtualGraph } from './hooks/useVirtualGraph'
@@ -35,7 +35,7 @@ export default function App() {
   const [rankDir, setRankDir] = useState<'LR' | 'TB'>('TB')
   const [stressTestNodeId, setStressTestNodeId] = useState<string | null>(null)
   const [stressRunKey, setStressRunKey] = useState(0)
-  const cyRef = useRef<Core | null>(null)
+  const graphRef = useRef<GraphViewportRef | null>(null)
 
   const handleSelectTab = useCallback((tab: TabEntry) => {
     if (activeTab?.id === tab.id) return
@@ -297,7 +297,7 @@ export default function App() {
         onRankDirChange={setRankDir}
         onSearch={setSearchQuery}
         onToggleTheme={toggleTheme}
-        cyRef={cyRef}
+        graphRef={graphRef}
         complexityOverlay={complexityOverlay}
         onToggleComplexityOverlay={() => setComplexityOverlay(v => !v)}
       />
@@ -364,7 +364,7 @@ export default function App() {
               visibleTypes={visibleTypes}
               theme={theme}
               onNodeSelect={handleNodeSelect}
-              cyRef={cyRef}
+              graphRef={graphRef}
               stressTestNodeId={stressTestNodeId}
               stressRunKey={stressRunKey}
               complexityOverlay={complexityOverlay}

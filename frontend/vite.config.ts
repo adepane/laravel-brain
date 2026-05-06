@@ -13,7 +13,7 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('react')) return 'vendor-react';
-            if (id.includes('cytoscape')) return 'vendor-cytoscape';
+            if (id.includes('d3')) return 'vendor-d3';
             if (id.includes('html2canvas')) return 'vendor-utils';
             return 'vendor';
           }

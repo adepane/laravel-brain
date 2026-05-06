@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import type { Core } from 'cytoscape'
+import type { GraphViewportRef } from '../types/graph'
 import { LARGE_GRAPH_THRESHOLD } from '../utils/graphConstants'
 import { ExportModal } from './ExportModal'
 import { AiRulesModal } from './AiRulesModal'
@@ -20,7 +20,7 @@ interface Props {
   onRankDirChange: (dir: 'LR' | 'TB') => void
   onSearch: (query: string) => void
   onToggleTheme: () => void
-  cyRef: React.MutableRefObject<Core | null>
+  graphRef: React.MutableRefObject<GraphViewportRef | null>
   complexityOverlay: boolean
   onToggleComplexityOverlay: () => void
 }
@@ -72,7 +72,7 @@ function ActionDropdown({ label, icon, children }: { label: string, icon: React.
   )
 }
 
-export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, cyRef, complexityOverlay, onToggleComplexityOverlay }: Props) {
+export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount, visibleCount, activeTabLabel, graphData, analyzedAt, theme, onLayoutChange, onSearch, onToggleTheme, graphRef, complexityOverlay, onToggleComplexityOverlay }: Props) {
   const [searchValue, setSearchValue] = useState('')
   const [showMermaid, setShowMermaid] = useState(false)
   const [showAiRules, setShowAiRules] = useState(false)
@@ -87,14 +87,14 @@ export function Toolbar({ layout, rankDir, onRankDirChange, nodeCount, edgeCount
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current) }
   }, [searchValue, onSearch])
 
-  const handleFit = () => cyRef.current?.fit()
+  const handleFit = () => graphRef.current?.fit()
 
   const handleExportPng = () => {
-    const cy = cyRef.current
-    if (!cy) return
-    const dataUrl = cy.png({ output: 'base64uri', scale: 2, full: true })
-    const safe = activeTabLabel.replace(/[^a-z0-9]/gi, '_')
-    downloadPng(dataUrl, `${safe}_graph.png`)
+    void graphRef.current?.toPng({ scale: 2 }).then((dataUrl) => {
+      if (!dataUrl) return
+      const safe = activeTabLabel.replace(/[^a-z0-9]/gi, '_')
+      downloadPng(dataUrl, `${safe}_graph.png`)
+    })
   }
 
   const handleExportMermaid = () => {

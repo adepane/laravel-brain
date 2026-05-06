@@ -1,18 +1,33 @@
 import type { GraphData, FlowStep } from '../types/graph'
+import { ACCENT_COLORS, BG_COLORS } from './graphConstants'
+import { splitNodeLabel } from './graphLayoutD3'
 
 // ── Mermaid from full graph data ──────────────────────────────────────────────
 
+const TYPE_ORDER = [
+  'route', 'middleware', 'controller', 'action', 'service', 'repository', 'model', 'job', 'event',
+  'filament_panel', 'filament_resource', 'filament_page', 'filament_page_method',
+  'filament_widget', 'filament_relation_manager',
+]
+
 /**
  * Convert the current tab's graph (nodes + edges) into Mermaid flowchart syntax.
- * Includes full FQCN labels, node type annotations, and all lifecycle edges.
+ * Styling matches the graph card design exactly (same bg/accent colors, label format).
  */
 export function graphToMermaid(data: GraphData, tabLabel: string): string {
-  const lines: string[] = [
-    `%% Laravel Lifecycle — ${tabLabel}`,
-    `%% Nodes: ${data.nodes.length}  Edges: ${data.edges.length}`,
-    `flowchart TD`,
-    ``,
-  ]
+  const lines: string[] = []
+
+  // Dark theme init — matches graph background
+  lines.push(`%%{init: {'theme': 'dark', 'themeVariables': {`)
+  lines.push(`  'background': '#0a0c10',`)
+  lines.push(`  'mainBkg': '#0d1117',`)
+  lines.push(`  'lineColor': 'rgba(255,255,255,0.35)',`)
+  lines.push(`  'edgeLabelBackground': '#111218',`)
+  lines.push(`  'edgeLabelColor': 'rgba(255,255,255,0.5)'`)
+  lines.push(`}}}%%`)
+  lines.push(`%% Laravel Brain — ${tabLabel}`)
+  lines.push(`flowchart TD`)
+  lines.push(``)
 
   // Node ID → safe Mermaid id
   const idMap = new Map<string, string>()
@@ -33,58 +48,65 @@ export function graphToMermaid(data: GraphData, tabLabel: string): string {
     return id
   }
 
-  // Group nodes by type for section comments
+  // Group nodes by type
   const byType = new Map<string, typeof data.nodes>()
   for (const node of data.nodes) {
     if (!byType.has(node.type)) byType.set(node.type, [])
     byType.get(node.type)!.push(node)
   }
-
-  const TYPE_ORDER = ['route', 'middleware', 'controller', 'action', 'service', 'repository', 'model', 'job', 'event']
   const allTypes = [...new Set([...TYPE_ORDER, ...byType.keys()])]
+  const typesWithNodes = allTypes.filter(t => (byType.get(t)?.length ?? 0) > 0)
 
-  for (const type of allTypes) {
-    const nodes = byType.get(type)
-    if (!nodes || nodes.length === 0) continue
-    lines.push(`  %% ${type.toUpperCase()}`)
+  // Emit nodes grouped by type
+  for (const type of typesWithNodes) {
+    const nodes = byType.get(type)!
+    lines.push(`  %% ${type}`)
     for (const node of nodes) {
       const id = safeId(node.id)
-      const label = escapeLabel(buildNodeLabel(node))
-      const [open, close] = nodeShape(node.type)
-      lines.push(`  ${id}${open}"${label}"${close}`)
+      const label = buildCardLabel(node)
+      lines.push(`  ${id}["${escapeLabel(label)}"]`)
     }
     lines.push(``)
   }
 
-  lines.push(`  %% EDGES`)
+  // Edges
+  lines.push(`  %% Edges`)
   for (const edge of data.edges) {
     const src = safeId(edge.source)
     const tgt = safeId(edge.target)
     const lbl = edge.label ? `|"${escapeLabel(edge.label)}"| ` : ''
     lines.push(`  ${src} -->${lbl}${tgt}`)
   }
-
-  lines.push(``)
-  lines.push(`  %% STYLES`)
-  lines.push(`  classDef cls_route    fill:#2e7d32,stroke:#4CAF50,color:#fff`)
-  lines.push(`  classDef cls_middleware fill:#e65100,stroke:#FF9800,color:#fff`)
-  lines.push(`  classDef cls_controller fill:#1565c0,stroke:#2196F3,color:#fff`)
-  lines.push(`  classDef cls_action   fill:#0277bd,stroke:#03A9F4,color:#fff`)
-  lines.push(`  classDef cls_service  fill:#6a1b9a,stroke:#9C27B0,color:#fff`)
-  lines.push(`  classDef cls_model    fill:#b71c1c,stroke:#F44336,color:#fff`)
-  lines.push(`  classDef cls_job      fill:#37474f,stroke:#607D8B,color:#fff`)
-  lines.push(`  classDef cls_event    fill:#f57f17,stroke:#FFD600,color:#000`)
   lines.push(``)
 
-  // Apply class annotations
-  for (const type of allTypes) {
-    const nodes = byType.get(type)
-    if (!nodes || nodes.length === 0) continue
+  // classDef — exact bg + accent from graphConstants
+  lines.push(`  %% Styles`)
+  for (const type of typesWithNodes) {
+    const accent = ACCENT_COLORS[type] ?? '#c9d1d9'
+    const bg = BG_COLORS[type] ?? '#0d1117'
+    lines.push(`  classDef cls_${type} fill:${bg},stroke:${accent},stroke-width:2px,color:#e6edf3`)
+  }
+  lines.push(``)
+
+  // Apply classes
+  for (const type of typesWithNodes) {
+    const nodes = byType.get(type)!
     const ids = nodes.map(n => safeId(n.id)).join(',')
     lines.push(`  class ${ids} cls_${type}`)
   }
 
   return lines.join('\n')
+}
+
+/** Build a card label that mirrors the graph node: "● type\nClassName\n↻ method()" */
+function buildCardLabel(node: { type: string; label: string; data: Record<string, unknown> }): string {
+  const rawLabel = String(node.label ?? '')
+  const dataMethod = node.data?.method as string | undefined
+  const { className, method } = splitNodeLabel(rawLabel, dataMethod)
+  const methodDisplay = method && !method.includes('(') ? method + '()' : method
+  const parts = [`● ${node.type}`, className]
+  if (methodDisplay) parts.push(`↻ ${methodDisplay}`)
+  return parts.join('\n')
 }
 
 // ── Mermaid from FlowStep[] ───────────────────────────────────────────────────
@@ -212,30 +234,6 @@ export async function domToPng(element: HTMLElement, bgColor = '#0d0f14'): Promi
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function buildNodeLabel(node: { type: string; label: string; data: Record<string, unknown> }): string {
-  const parts = [node.label]
-  if (node.data?.fqcn && node.data.fqcn !== node.label) {
-    parts.push(String(node.data.fqcn))
-  }
-  if (node.data?.method) parts.push(`@${node.data.method}`)
-  if (node.data?.file) {
-    const file = String(node.data.file)
-    const short = file.split('/').slice(-2).join('/')
-    parts.push(short)
-  }
-  return parts.join('\n')
-}
-
-function nodeShape(type: string): [string, string] {
-  switch (type) {
-    case 'route':      return ['([', '])']
-    case 'model':      return ['[(', ')]']
-    case 'middleware': return ['{{', '}}']
-    case 'job':        return ['[[', ']]']
-    case 'event':      return ['((', '))']
-    default:           return ['[', ']']
-  }
-}
 
 function stepShape(type: string): string {
   switch (type) {

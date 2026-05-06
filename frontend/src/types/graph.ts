@@ -49,6 +49,23 @@ export interface GraphData {
   edges: GraphEdge[]
 }
 
+/** One node or edge in the format produced from `GraphData` (Cytoscape-compatible shape). */
+export interface GraphElement {
+  data: Record<string, unknown> & {
+    id: string
+    label?: string
+    type?: string
+    source?: string
+    target?: string
+  }
+}
+
+/** Imperative handle for zoom/pan, fit, and raster export from the D3 graph view. */
+export interface GraphViewportRef {
+  fit: () => void
+  toPng: (options?: { scale?: number }) => Promise<string | null>
+}
+
 export interface MethodInfo {
   name: string
   flowSteps: FlowStep[]

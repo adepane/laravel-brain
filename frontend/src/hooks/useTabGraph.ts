@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { GraphData } from '../types/graph'
-import type { ElementDefinition } from 'cytoscape'
+import type { GraphElement } from '../types/graph'
 
 interface TabGraphState {
   data: GraphData | null
@@ -10,11 +10,11 @@ interface TabGraphState {
 
 interface UseTabGraphResult {
   state: TabGraphState
-  elements: ElementDefinition[]
+  elements: GraphElement[]
   load: (file: string) => void
 }
 
-function toElements(data: GraphData): ElementDefinition[] {
+function toElements(data: GraphData): GraphElement[] {
   return [
     ...data.nodes.map((n) => ({
       data: {

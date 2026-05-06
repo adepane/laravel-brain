@@ -1,42 +1,57 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react'
-import CytoscapeComponent from 'react-cytoscapejs'
-import type { Core, ElementDefinition, NodeSingular, EdgeSingular, Css } from 'cytoscape'
-import cytoscape from 'cytoscape'
-// @ts-expect-error: Missing type definitions for cytoscape-dagre
-import dagre from 'cytoscape-dagre'
-// @ts-expect-error: Missing type definitions for cytoscape-cose-bilkent
-import coseBilkent from 'cytoscape-cose-bilkent'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { select, zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3'
+import html2canvas from 'html2canvas'
+import type { GraphElement, GraphViewportRef } from '../types/graph'
+import {
+  LARGE_GRAPH_THRESHOLD,
+  PACKET_ANIMATION_THRESHOLD,
+  ACCENT_COLORS,
+  BG_COLORS,
+  HIGHLIGHT_COLOR,
+  CC_TIERS,
+} from '../utils/graphConstants'
+import {
+  type LayoutEdge,
+  type LayoutNode,
+  CARD_H,
+  centerNodes,
+  layoutBreadthFirst,
+  layoutCircle,
+  layoutDagre,
+  layoutForce,
+  layoutGrid,
+  partitionElements,
+  pickLayoutKind,
+  splitNodeLabel,
+} from '../utils/graphLayoutD3'
 
-cytoscape.use(dagre)
-cytoscape.use(coseBilkent)
-
-import { LARGE_GRAPH_THRESHOLD, PACKET_ANIMATION_THRESHOLD, ACCENT_COLORS, BG_COLORS, HIGHLIGHT_COLOR, CC_TIERS } from '../utils/graphConstants'
-
-// ── Packet animation types ────────────────────────────────────────────────────
+// ── Geometry ───────────────────────────────────────────────────────────────
 
 interface Packet {
   id: string
-  // Model-space coordinates (Cytoscape units, converted to screen each frame)
-  srcMX: number; srcMY: number
-  tgtMX: number; tgtMY: number
-  // Optional bezier control points (model space)
-  cp1?: { x: number; y: number }
-  cp2?: { x: number; y: number }
-  progress: number      // 0 → 1
-  speed: number         // progress units per ms
+  waypoints: Array<{ x: number; y: number }> // model-space bend points along the edge path
+  progress: number
+  speed: number
   color: string
-  pulse: number         // 0→1 flash at destination when packet arrives
-  sparkCooldown: number // ms until next spark spawn
-  tgtNodeId: string     // cytoscape node id of the target node
-  chained: boolean      // whether this packet should chain-fire on arrival
-  arrived: boolean      // whether chain was already triggered
+  pulse: number
+  sparkCooldown: number
+  tgtNodeId: string
+  chained: boolean
+  arrived: boolean
+  // Latency simulation (stress-test mode)
+  stallAt: number        // progress (0–1) at which the packet pauses; 0 = no stall
+  stallRemaining: number // ms left in current stall
+  timedOut: boolean      // packet times out mid-flight and dies with a red burst
+  timeoutAt: number      // progress at which timeout fires; 0 = no timeout
 }
 
 interface Spark {
-  x: number; y: number     // screen coords
-  vx: number; vy: number   // px per ms
-  life: number             // 0..1
-  decay: number            // life lost per ms
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number
+  decay: number
   size: number
   color: string
 }
@@ -45,421 +60,659 @@ function hex2(n: number) {
   return Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')
 }
 
-// Quadratic bezier
-function qBez(t: number, p0: number, p1: number, p2: number) {
-  const u = 1 - t
-  return u * u * p0 + 2 * u * t * p1 + t * t * p2
+function modelToScreen(mx: number, my: number, t: ZoomTransform) {
+  return { x: t.applyX(mx), y: t.applyY(my) }
 }
 
-// Cubic bezier
-function cBez(t: number, p0: number, p1: number, p2: number, p3: number) {
-  const u = 1 - t
-  return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3
-}
-
-function modelToScreen(mx: number, my: number, pan: { x: number; y: number }, zoom: number) {
-  return { x: mx * zoom + pan.x, y: my * zoom + pan.y }
-}
-
-function evalCurve(
+/**
+ * Evaluate a position at parameter t (0–1) along a piecewise-linear polyline,
+ * distributing t proportionally by segment length so the packet moves at
+ * consistent apparent speed regardless of segment count or direction.
+ */
+function evalPolyline(
   t: number,
-  src: { x: number; y: number },
-  tgt: { x: number; y: number },
-  cp1?: { x: number; y: number },
-  cp2?: { x: number; y: number },
-) {
-  if (cp1 && cp2) {
-    return { x: cBez(t, src.x, cp1.x, cp2.x, tgt.x), y: cBez(t, src.y, cp1.y, cp2.y, tgt.y) }
+  pts: Array<{ x: number; y: number }>,
+): { x: number; y: number } {
+  if (pts.length === 0) return { x: 0, y: 0 }
+  if (pts.length === 1) return pts[0]
+  if (t <= 0) return pts[0]
+  if (t >= 1) return pts[pts.length - 1]
+
+  let totalLen = 0
+  const segLens: number[] = []
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = pts[i + 1].x - pts[i].x
+    const dy = pts[i + 1].y - pts[i].y
+    const len = Math.sqrt(dx * dx + dy * dy)
+    segLens.push(len)
+    totalLen += len
   }
-  if (cp1) {
-    return { x: qBez(t, src.x, cp1.x, tgt.x), y: qBez(t, src.y, cp1.y, tgt.y) }
-  }
-  return { x: src.x + (tgt.x - src.x) * t, y: src.y + (tgt.y - src.y) * t }
-}
+  if (totalLen === 0) return pts[0]
 
-// ── Cytoscape stylesheet ──────────────────────────────────────────────────────
-
-function nodePrefix(ele: NodeSingular): string {
-  let prefix = ''
-  if (ele.data('hasN1'))     prefix += '⚠️ '
-  if (ele.data('fatMethod')) prefix += '🧱 '
-  if (ele.data('fatClass'))  prefix += '🏗️ '
-  const vis = ele.data('visibility')
-  if (vis === 'private')   prefix += '🔒 '
-  if (vis === 'protected') prefix += '🛡️ '
-  return prefix
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildStylesheet(dark: boolean): any[] {
-  const edgeLine = dark ? 'rgba(255,255,255, 0.07)' : 'rgba(0,0,0,0.1)'
-  const edgeArrow = dark ? 'rgba(255,255,255, 0.12)' : 'rgba(0,0,0,0.15)'
-  const edgeLabel = dark ? 'rgba(255,255,255, 0.4)' : 'rgba(0,0,0,0.5)'
-
-  return [
-    {
-      selector: 'node',
-      style: {
-        label: (ele: NodeSingular) => nodePrefix(ele) + ele.data('label'),
-        'text-valign': 'center',
-        'text-halign': 'center',
-        'font-size': 11,
-        'font-weight': 600,
-        'font-family': 'ui-monospace, monospace',
-        color: '#fff',
-        'text-wrap': 'wrap',
-        'text-max-width': '140px',
-        width: 'label',
-        height: 'label',
-        padding: '10px 14px',
-        shape: 'round-rectangle',
-        'background-color': '#181c27',
-        'border-width': 1.5,
-        'border-color': 'rgba(255,255,255,0.1)',
-        'corner-radius': '6px',
-      } as Css.Node,
-    },
-    {
-      selector: 'node[hasN1 = 1]',
-      style: {
-        'border-color': '#F44336',
-        'border-width': 2,
-        'shadow-blur': 12,
-        'shadow-color': '#F44336',
-        'shadow-opacity': 0.5,
-      } as Css.Node,
-    },
-    ...Object.entries(ACCENT_COLORS).map(([type, color]) => ({
-      selector: `node[type = "${type}"]`,
-      style: {
-        'border-color': color,
-        'background-color': BG_COLORS[type] || '#181c27',
-        color: color,
-      } as Css.Node,
-    })),
-    // CC overlay tiers — activate by adding class 'cc-overlay' to nodes
-    ...CC_TIERS.map(tier => ({
-      selector: tier.max < Infinity
-        ? `node.cc-overlay[metrics_cc >= ${tier.min}][metrics_cc <= ${tier.max}]`
-        : `node.cc-overlay[metrics_cc >= ${tier.min}]`,
-      style: {
-        'background-color': tier.fill,
-        'border-color': tier.border,
-        color: tier.border,
-      } as Css.Node,
-    })),
-    {
-      selector: 'node.cc-overlay',
-      style: {
-        label: (ele: NodeSingular) => {
-          const cc = ele.data('metrics_cc') as number
-          const suffix = cc > 0 ? ` [${cc}]` : ''
-          return nodePrefix(ele) + ele.data('label') + suffix
-        },
-      } as Css.Node,
-    },
-    { selector: 'node.dimmed', style: { opacity: 0.1, filter: 'grayscale(100%)' } },
-    { selector: 'node.hidden', style: { display: 'none' } },
-    {
-      selector: 'node:selected',
-      style: {
-        'border-width': 2.5,
-        'border-color': (ele: NodeSingular) => ACCENT_COLORS[ele.data('type')] || '#fff',
-        'shadow-blur': 15,
-        'shadow-color': (ele: NodeSingular) => ACCENT_COLORS[ele.data('type')] || '#fff',
-        'shadow-opacity': 0.8,
-        'background-color': (ele: NodeSingular) => {
-          const type = ele.data('type')
-          return BG_COLORS[type] ? BG_COLORS[type] : '#181c27'
-        },
-        'overlay-color': '#fff',
-        'overlay-padding': 4,
-        'overlay-opacity': 0.05,
-      } as Css.Node,
-    },
-    {
-      selector: 'edge',
-      style: {
-        width: 1,
-        'line-color': edgeLine,
-        'target-arrow-color': edgeArrow,
-        'target-arrow-shape': 'triangle',
-        'arrow-scale': 0.8,
-        'curve-style': 'bezier',
-        label: 'data(label)',
-        'font-size': 9,
-        'font-family': 'ui-monospace, monospace',
-        color: edgeLabel,
-        'text-rotation': 'autorotate',
-        'text-margin-y': -10,
-        'text-opacity': 1,
-        'text-background-color': dark ? '#111218' : '#fff',
-        'text-background-opacity': 1,
-        'text-background-padding': '3px',
-        'text-background-shape': 'roundrectangle',
-      } as Css.Edge,
-    },
-    {
-      selector: 'edge.highlighted',
-      style: {
-        width: 1.5,
-        'line-color': HIGHLIGHT_COLOR,
-        'target-arrow-color': HIGHLIGHT_COLOR,
-        'text-opacity': 1,
-        color: HIGHLIGHT_COLOR,
-        'z-index': 999,
-      } as Css.Edge,
-    },
-    { selector: 'edge.dimmed', style: { opacity: 0.02 } },
-    { selector: 'edge.hidden', style: { display: 'none' } },
-    {
-      selector: 'node.st-path',
-      style: {
-        'border-width': 2.5,
-        'border-color': '#a855f7',
-        'shadow-blur': 18,
-        'shadow-color': '#a855f7',
-        'shadow-opacity': 0.6,
-      } as Css.Node,
-    },
-    {
-      selector: 'edge.st-path',
-      style: {
-        width: 2,
-        'line-color': '#a855f7',
-        'target-arrow-color': '#a855f7',
-        'line-opacity': 0.7,
-        'z-index': 998,
-      } as Css.Edge,
-    },
-  ]
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function pickLayout(name: string, nodeCount: number, rankDir: 'LR' | 'TB'): any {
-  const large = nodeCount > LARGE_GRAPH_THRESHOLD
-
-  if (name === 'dagre') {
-    if (large) {
-      return { name: 'breadthfirst', directed: true, spacingFactor: 1.4, padding: 40, animate: false }
+  const target = t * totalLen
+  let accumulated = 0
+  for (let i = 0; i < segLens.length; i++) {
+    const segLen = segLens[i]
+    if (segLen === 0) continue
+    if (accumulated + segLen >= target || i === segLens.length - 1) {
+      const localT = (target - accumulated) / segLen
+      const p0 = pts[i]
+      const p1 = pts[i + 1]
+      return {
+        x: p0.x + (p1.x - p0.x) * localT,
+        y: p0.y + (p1.y - p0.y) * localT,
+      }
     }
-    return { name: 'dagre', rankDir, nodeSep: rankDir === 'TB' ? 60 : 40, rankSep: 80, padding: 40, animate: false }
+    accumulated += segLen
   }
-  if (name === 'cose-bilkent') {
-    return { name: 'cose-bilkent', animate: false, randomize: false, padding: 40, nodeDimensionsIncludeLabels: true }
-  }
-  if (name === 'breadthfirst') {
-    return { name: 'breadthfirst', directed: true, spacingFactor: 1.4, padding: 40, animate: false }
-  }
-  return { name, padding: 40, animate: false }
+  return pts[pts.length - 1]
 }
 
-// ── Props ─────────────────────────────────────────────────────────────────────
+/**
+ * Return the orthogonal-path waypoints for an edge in model space.
+ * These mirror the geometry produced by `orthogonalPath` so packets
+ * travel along exactly the same route as the drawn SVG edge.
+ */
+function orthogonalWaypoints(
+  ns: LayoutNode,
+  nt: LayoutNode,
+  rankDir: 'LR' | 'TB',
+): Array<{ x: number; y: number }> {
+  if (rankDir === 'TB') {
+    const ex = ns.x,  ey = ns.y + ns.height / 2
+    const tx = nt.x,  ty = nt.y - nt.height / 2
+    if (Math.abs(ex - tx) < 3 || ty <= ey + 8) {
+      return [{ x: ex, y: ey }, { x: tx, y: ty }]
+    }
+    const midY = (ey + ty) / 2
+    return [{ x: ex, y: ey }, { x: ex, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }]
+  } else {
+    const ex = ns.x + ns.width / 2,  ey = ns.y
+    const tx = nt.x - nt.width / 2,  ty = nt.y
+    if (Math.abs(ey - ty) < 3 || tx <= ex + 8) {
+      return [{ x: ex, y: ey }, { x: tx, y: ty }]
+    }
+    const midX = (ex + tx) / 2
+    return [{ x: ex, y: ey }, { x: midX, y: ey }, { x: midX, y: ty }, { x: tx, y: ty }]
+  }
+}
+
+const ORTHO_R = 7 // corner rounding radius
+
+/** Clamp corner radius so it never overflows any of the given segment lengths. */
+function clampR(...dists: number[]): number {
+  return Math.max(0, Math.min(ORTHO_R, ...dists.map((d) => d - 1)))
+}
+
+/**
+ * Build an orthogonal (elbow) SVG path between two nodes.
+ * Returns the path `d` string plus `lx/ly` — the best point for an edge label.
+ * Exit port: bottom-center (TB) or right-center (LR).
+ * Entry port: top-center (TB) or left-center (LR).
+ */
+function orthogonalPath(
+  ns: LayoutNode,
+  nt: LayoutNode,
+  rankDir: 'LR' | 'TB',
+): { d: string; lx: number; ly: number; exitX: number; exitY: number; entryX: number; entryY: number } {
+  if (rankDir === 'TB') {
+    const ex = ns.x,  ey = ns.y + ns.height / 2
+    const tx = nt.x,  ty = nt.y - nt.height / 2
+    // Straight vertical (same column or backward edge)
+    if (Math.abs(ex - tx) < 3 || ty <= ey + 8) {
+      return { d: `M${ex},${ey} L${tx},${ty}`, lx: ex + 6, ly: (ey + ty) / 2, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
+    }
+    const midY = (ey + ty) / 2
+    const r = clampR(midY - ey, ty - midY, Math.abs(tx - ex))
+    const sx = tx > ex ? r : -r
+    const d = r > 0
+      ? `M${ex},${ey} V${midY - r} Q${ex},${midY} ${ex + sx},${midY} H${tx - sx} Q${tx},${midY} ${tx},${midY + r} V${ty}`
+      : `M${ex},${ey} V${midY} H${tx} V${ty}`
+    return { d, lx: (ex + tx) / 2, ly: midY - 14, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
+  } else {
+    // LR
+    const ex = ns.x + ns.width / 2,  ey = ns.y
+    const tx = nt.x - nt.width / 2,  ty = nt.y
+    // Straight horizontal (same row or backward edge)
+    if (Math.abs(ey - ty) < 3 || tx <= ex + 8) {
+      return { d: `M${ex},${ey} L${tx},${ty}`, lx: (ex + tx) / 2, ly: ey - 10, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
+    }
+    const midX = (ex + tx) / 2
+    const r = clampR(midX - ex, tx - midX, Math.abs(ty - ey))
+    const sy = ty > ey ? r : -r
+    const d = r > 0
+      ? `M${ex},${ey} H${midX - r} Q${midX},${ey} ${midX},${ey + sy} V${ty - sy} Q${midX},${ty} ${midX + r},${ty} H${tx}`
+      : `M${ex},${ey} H${midX} V${ty} H${tx}`
+    return { d, lx: midX + 6, ly: (ey + ty) / 2, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
+  }
+}
+
+function labelForEdge(d: LayoutEdge['data'], dark: boolean) {
+  const lbl = String(d.label ?? '')
+  if (!lbl) return null
+  const fill = dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.5)'
+  const bg = dark ? '#111218' : '#fff'
+  return { text: lbl, fill, bg }
+}
+
+function cardColors(
+  n: LayoutNode,
+  dark: boolean,
+  complexityOverlay: boolean,
+  selected: boolean,
+  stN: boolean,
+): { bg: string; border: string; borderW: number; accent: string } {
+  const type = String(n.data.type ?? '')
+  const accent = ACCENT_COLORS[type] ?? (dark ? '#c9d1d9' : '#333')
+  const bg = BG_COLORS[type] ?? (dark ? '#0d1117' : '#ffffff')
+  const cc = Number(n.data.metrics_cc ?? 0) || 0
+
+  if (complexityOverlay) {
+    const tier = CC_TIERS.find((t) => cc >= t.min && cc <= t.max) ?? CC_TIERS[0]
+    const border = stN ? '#a855f7' : n.data.hasN1 ? '#F44336' : tier.border
+    return { bg: tier.fill, border, borderW: 1.5, accent: tier.border }
+  }
+
+  let border = dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.12)'
+  let borderW = 1
+  if (n.data.hasN1) { border = '#F44336'; borderW = 2 }
+  if (selected) { border = accent; borderW = 2 }
+  if (stN) { border = '#a855f7'; borderW = 2 }
+
+  return { bg, border, borderW, accent }
+}
+
+// ── Props ───────────────────────────────────────────────────────────────────
 
 interface Props {
-  elements: ElementDefinition[]
+  elements: GraphElement[]
   layout: string
   rankDir: 'LR' | 'TB'
   searchQuery: string
   visibleTypes: Set<string>
   theme: 'dark' | 'light'
   onNodeSelect: (id: string | null) => void
-  cyRef: React.MutableRefObject<Core | null>
+  graphRef: React.MutableRefObject<GraphViewportRef | null>
   stressTestNodeId?: string | null
   stressRunKey?: number
   complexityOverlay: boolean
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+export function GraphView({
+  elements,
+  layout,
+  rankDir,
+  searchQuery,
+  visibleTypes,
+  theme,
+  onNodeSelect,
+  graphRef,
+  stressTestNodeId,
+  stressRunKey,
+  complexityOverlay,
+}: Props) {
+  const dark = theme === 'dark'
+  // Previous alphas (0.07 / 0.1) made edge strokes nearly invisible while marker tips still showed.
+  const edgeLine = dark ? 'rgba(255,255,255,0.32)' : 'rgba(0,0,0,0.38)'
+  const edgeArrow = dark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'
 
-export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes, theme, onNodeSelect, cyRef, stressTestNodeId, stressRunKey, complexityOverlay }: Props) {
-  const nodeCount = useMemo(() => elements.filter((e) => !e.data?.source).length, [elements])
-  const stylesheet = useMemo(() => buildStylesheet(theme === 'dark'), [theme])
-  const prevSearch = useRef(searchQuery)
+  const { nodes: baseNodes, edges: baseEdges } = useMemo(() => partitionElements(elements), [elements])
+
+  const visibleNodeCount = useMemo(
+    () => baseNodes.filter((n) => visibleTypes.has(String(n.data.type))).length,
+    [baseNodes, visibleTypes],
+  )
+
+  const [layoutTick, setLayoutTick] = useState(0)
   const layoutTimeout = useRef<number | null>(null)
-  const searchTimeout = useRef<number | null>(null)
-  const layoutConfig = useMemo(() => pickLayout(layout, nodeCount, rankDir), [layout, nodeCount, rankDir])
+  const layoutDebounceSkipMount = useRef(true)
 
-  // Canvas overlay
+  useEffect(() => {
+    if (layoutDebounceSkipMount.current) {
+      layoutDebounceSkipMount.current = false
+      return
+    }
+    if (layoutTimeout.current) window.clearTimeout(layoutTimeout.current)
+    layoutTimeout.current = window.setTimeout(() => {
+      setLayoutTick((k) => k + 1)
+    }, 200)
+    return () => {
+      if (layoutTimeout.current) window.clearTimeout(layoutTimeout.current)
+    }
+  }, [visibleTypes, layout, rankDir])
+
+  const { nodes, edges } = useMemo(() => {
+    void layoutTick
+    const nodesCopy = baseNodes.map((n) => ({ ...n, lines: [...n.lines] }))
+    const edgesCopy = baseEdges.map((e) => ({ ...e }))
+    const kind = pickLayoutKind(layout, visibleNodeCount, LARGE_GRAPH_THRESHOLD)
+
+    if (kind === 'dagre') layoutDagre(nodesCopy, edgesCopy, rankDir)
+    else if (kind === 'breadthfirst') layoutBreadthFirst(nodesCopy, edgesCopy, rankDir)
+    else if (kind === 'force') layoutForce(nodesCopy, edgesCopy)
+    else if (kind === 'circle') {
+      const r = Math.min(280, 90 + nodesCopy.length * 4)
+      layoutCircle(nodesCopy, r)
+    } else layoutGrid(nodesCopy, 200, 130)
+
+    centerNodes(nodesCopy)
+    return { nodes: nodesCopy, edges: edgesCopy }
+  }, [baseNodes, baseEdges, layout, rankDir, layoutTick, visibleNodeCount])
+
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
+
+  // ── Per-node drag overrides ────────────────────────────────────────────────
+  const [draggedPositions, setDraggedPositions] = useState<Map<string, { x: number; y: number }>>(new Map())
+  const dragStateRef = useRef<{
+    nodeId: string
+    startSX: number
+    startSY: number
+    origMX: number
+    origMY: number
+  } | null>(null)
+  const isDraggingRef = useRef(false)
+
+  // ── Collapse state ─────────────────────────────────────────────────────────
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
+
+  // Reset drag and collapse state when nodes change (during render, not in an effect).
+  const [prevNodes, setPrevNodes] = useState(nodes)
+  if (prevNodes !== nodes) {
+    setPrevNodes(nodes)
+    setDraggedPositions(new Map())
+    setCollapsedNodes(new Set())
+  }
+
+  const effectiveNodes = useMemo(() => {
+    if (draggedPositions.size === 0) return nodes
+    return nodes.map((n) => {
+      const pos = draggedPositions.get(n.id)
+      return pos ? { ...n, x: pos.x, y: pos.y } : n
+    })
+  }, [nodes, draggedPositions])
+
+  const effectiveNodeById = useMemo(
+    () => new Map(effectiveNodes.map((n) => [n.id, n])),
+    [effectiveNodes],
+  )
+
+  const isTypeVisible = useCallback((type: unknown) => visibleTypes.has(String(type)), [visibleTypes])
+
+  const edgeVisible = useCallback(
+    (e: LayoutEdge) =>
+      isTypeVisible(nodeById.get(e.source)?.data.type) &&
+      isTypeVisible(nodeById.get(e.target)?.data.type),
+    [nodeById, isTypeVisible],
+  )
+
+  /** Nodes hidden because every path to them passes through a collapsed node (recursive). */
+  const hiddenNodeIds = useMemo(() => {
+    const parentMap = new Map<string, string[]>()
+    for (const n of nodes) parentMap.set(n.id, [])
+    for (const e of edges) {
+      if (!edgeVisible(e)) continue
+      parentMap.get(e.target)?.push(e.source)
+    }
+    const hidden = new Set<string>()
+    // Propagate: a node is hidden when every parent is collapsed or already hidden.
+    // Repeat until the set stops growing (handles arbitrary depth).
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const n of nodes) {
+        if (hidden.has(n.id)) continue
+        const parents = parentMap.get(n.id) ?? []
+        if (parents.length > 0 && parents.every((p) => collapsedNodes.has(p) || hidden.has(p))) {
+          hidden.add(n.id)
+          changed = true
+        }
+      }
+    }
+    return hidden
+  }, [nodes, edges, edgeVisible, collapsedNodes])
+
+  /** Number of currently-visible (non-hidden) outgoing edges per node. */
+  const outDegree = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const e of edges) {
+      if (!edgeVisible(e)) continue
+      if (hiddenNodeIds.has(e.target)) continue
+      map.set(e.source, (map.get(e.source) ?? 0) + 1)
+    }
+    return map
+  }, [edges, edgeVisible, hiddenNodeIds])
+
+  const toggleCollapse = useCallback((ev: React.MouseEvent, nodeId: string) => {
+    ev.stopPropagation()
+    setCollapsedNodes((prev) => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) next.delete(nodeId)
+      else next.add(nodeId)
+      return next
+    })
+  }, [])
+
+  /** Total hidden descendants per collapsed node (for the badge label). */
+  const hiddenDescendantCount = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const collapsedId of collapsedNodes) {
+      let count = 0
+      const visited = new Set<string>()
+      const queue = [collapsedId]
+      while (queue.length) {
+        const id = queue.shift()!
+        for (const e of edges) {
+          if (e.source !== id || !edgeVisible(e)) continue
+          const child = e.target
+          if (visited.has(child)) continue
+          visited.add(child)
+          if (hiddenNodeIds.has(child)) {
+            count++
+            queue.push(child)
+          }
+        }
+      }
+      map.set(collapsedId, count)
+    }
+    return map
+  }, [collapsedNodes, hiddenNodeIds, edges, edgeVisible])
+
+  const searchMatch = useMemo(() => {
+    if (!searchQuery.trim()) return null
+    const q = searchQuery.toLowerCase()
+    const set = new Set<string>()
+    for (const n of nodes) {
+      const label = String(n.data.label ?? n.id).toLowerCase()
+      if (label.includes(q)) set.add(n.id)
+    }
+    return set
+  }, [nodes, searchQuery])
+
+  const stressSets = useMemo(() => {
+    const emptyN = new Set<string>()
+    const emptyE = new Set<string>()
+    if (!stressTestNodeId || !nodeById.has(stressTestNodeId)) {
+      return { nodes: emptyN, edges: emptyE }
+    }
+    const visNodes = new Set<string>()
+    const visEdges = new Set<string>()
+    const visited = new Set<string>()
+    const q = [stressTestNodeId]
+    while (q.length) {
+      const id = q.shift()!
+      if (visited.has(id)) continue
+      visited.add(id)
+      visNodes.add(id)
+      for (const e of edges) {
+        if (e.source !== id) continue
+        if (!edgeVisible(e)) continue
+        visEdges.add(e.id)
+        const t = e.target
+        if (!visited.has(t)) q.push(t)
+      }
+    }
+    return { nodes: visNodes, edges: visEdges }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stressTestNodeId, stressRunKey, edges, edgeVisible, nodeById])
+
+  const [highlightEdgeIds, setHighlightEdgeIds] = useState<Set<string>>(new Set())
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const tapNode = useCallback(
+    (id: string) => {
+      const next = new Set<string>()
+      for (const e of edges) {
+        if (e.source === id || e.target === id) next.add(e.id)
+      }
+      setHighlightEdgeIds(next)
+      setSelectedNodeId(id)
+      onNodeSelect(id)
+    },
+    [edges, onNodeSelect],
+  )
+
+  const tapBg = useCallback(() => {
+    setHighlightEdgeIds(new Set())
+    setSelectedNodeId(null)
+    onNodeSelect(null)
+  }, [onNodeSelect])
+
+  // ── Node drag handlers ─────────────────────────────────────────────────────
+  const handleNodePointerDown = useCallback(
+    (e: React.PointerEvent<SVGGElement>, nodeId: string, mx: number, my: number) => {
+      e.stopPropagation()
+      ;(e.currentTarget as SVGGElement).setPointerCapture(e.pointerId)
+      isDraggingRef.current = false
+      dragStateRef.current = { nodeId, startSX: e.clientX, startSY: e.clientY, origMX: mx, origMY: my }
+    },
+    [],
+  )
+
+  const handleNodePointerMove = useCallback(
+    (e: React.PointerEvent<SVGGElement>, nodeId: string) => {
+      const ds = dragStateRef.current
+      if (!ds || ds.nodeId !== nodeId) return
+      const dx = e.clientX - ds.startSX
+      const dy = e.clientY - ds.startSY
+      if (!isDraggingRef.current && Math.abs(dx) < 4 && Math.abs(dy) < 4) return
+      isDraggingRef.current = true
+      const k = transformRef.current.k
+      setDraggedPositions((prev) => {
+        const next = new Map(prev)
+        next.set(nodeId, { x: ds.origMX + dx / k, y: ds.origMY + dy / k })
+        return next
+      })
+    },
+    [],
+  )
+
+  const handleNodePointerUp = useCallback((_e: React.PointerEvent<SVGGElement>, nodeId: string) => {
+    if (dragStateRef.current?.nodeId === nodeId) dragStateRef.current = null
+  }, [])
+
+  /** Packet animation */
   const containerRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const innerRef = useRef<SVGGElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const packetsRef = useRef<Packet[]>([])
   const sparksRef = useRef<Spark[]>([])
   const lastFrameRef = useRef<number>(0)
-  // Cooldown map: nodeId → timestamp of last fire (prevents infinite loop in cyclic graphs)
   const nodeLastFiredRef = useRef<Map<string, number>>(new Map())
+  const transformRef = useRef<ZoomTransform>(zoomIdentity)
+  const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null)
 
-  // ── Packet spawning ─────────────────────────────────────────────────────────
+  const spawnPacket = useCallback(
+    (edgeId: string, color: string, delay = 0, chained = false) => {
+      const e = edges.find((x) => x.id === edgeId)
+      if (!e || !edgeVisible(e)) return
+      const ns = nodeById.get(e.source)
+      const nt = nodeById.get(e.target)
+      if (!ns || !nt) return
 
-  const spawnPacket = useCallback((
-    cy: Core,
-    edgeId: string,
-    color: string,
-    delay = 0,
-    chained = false,
-  ) => {
-    const edge = cy.getElementById(edgeId)
-    if (!edge || !edge.isEdge()) return
+      const waypoints = orthogonalWaypoints(ns, nt, rankDir)
 
-    const src = edge.sourceEndpoint()
-    const tgt = edge.targetEndpoint()
-    if (!isFinite(src.x) || !isFinite(src.y) || !isFinite(tgt.x) || !isFinite(tgt.y)) return
+      // Latency simulation: only for stress-test packets (chained = true)
+      const stallAt = chained && Math.random() < 0.65
+        ? 0.15 + Math.random() * 0.55
+        : 0
+      const stallRemaining = stallAt > 0 ? 120 + Math.random() * 700 : 0
+      const timedOut = chained && Math.random() < 0.12
+      const timeoutAt = timedOut ? 0.25 + Math.random() * 0.55 : 0
 
-    const cps = edge.controlPoints() as { x: number; y: number }[] | undefined
-    const tgtNodeId = edge.target().id()
+      setTimeout(() => {
+        packetsRef.current.push({
+          id: `${edgeId}-${Date.now()}-${Math.random()}`,
+          waypoints,
+          progress: 0,
+          speed: 0.0009 + Math.random() * 0.0004,
+          color,
+          pulse: 0,
+          sparkCooldown: 0,
+          tgtNodeId: e.target,
+          chained,
+          arrived: false,
+          stallAt,
+          stallRemaining,
+          timedOut,
+          timeoutAt,
+        })
+      }, delay)
+    },
+    [edges, nodeById, edgeVisible, rankDir],
+  )
 
-    setTimeout(() => {
-      const pkt: Packet = {
-        id: `${edgeId}-${Date.now()}-${Math.random()}`,
-        srcMX: src.x, srcMY: src.y,
-        tgtMX: tgt.x, tgtMY: tgt.y,
-        cp1: cps?.[0],
-        cp2: cps?.[1],
-        progress: 0,
-        speed: 0.0009 + Math.random() * 0.0004,
-        color,
-        pulse: 0,
-        sparkCooldown: 0,
-        tgtNodeId,
-        chained,
-        arrived: false,
+  const spawnChainFromNode = useCallback(
+    (nodeId: string, color: string, delay = 0) => {
+      const COOLDOWN_MS = 1800
+      const now = Date.now()
+      const last = nodeLastFiredRef.current.get(nodeId) ?? 0
+      if (now - last < COOLDOWN_MS) return
+      nodeLastFiredRef.current.set(nodeId, now)
+
+      let i = 0
+      for (const edge of edges) {
+        if (edge.source !== nodeId) continue
+        if (!edgeVisible(edge)) continue
+        spawnPacket(edge.id, color, delay + i * 60, true)
+        i++
       }
-      packetsRef.current.push(pkt)
-    }, delay)
-  }, [])
+    },
+    [edges, edgeVisible, spawnPacket],
+  )
 
-  // Fire packets on all outgoing edges of a node and mark them as chained
-  const spawnChainFromNode = useCallback((cy: Core, nodeId: string, color: string, delay = 0) => {
-    const COOLDOWN_MS = 1800
-    const now = Date.now()
-    const last = nodeLastFiredRef.current.get(nodeId) ?? 0
-    if (now - last < COOLDOWN_MS) return
-    nodeLastFiredRef.current.set(nodeId, now)
-
-    const outEdges = cy.getElementById(nodeId).outgoers('edge:visible')
-    outEdges.forEach((edge: EdgeSingular, i: number) => {
-      spawnPacket(cy, edge.id(), color, delay + i * 60, true)
-    })
-  }, [spawnPacket])
-
-  // ── Stress-test packet bursts ──────────────────────────────────────────────
-  // Fire purple packets from the active stress-test node every 700ms.
-  // Bypasses cooldown (calls spawnPacket directly) and the PACKET_ANIMATION_THRESHOLD
-  // guard so the animation always plays when a user explicitly triggered a test.
-  // Also highlights the full request path (route → middleware → controller → …).
   useEffect(() => {
-    const cy = cyRef.current
-    if (!stressTestNodeId || !cy) return
-
-    // BFS from the stressed route node to collect all path nodes/edges, then
-    // add the 'st-path' class so the stylesheet can highlight them.
-    const visited = new Set<string>()
-    const queue = [stressTestNodeId]
-    while (queue.length > 0) {
-      const id = queue.shift()!
-      if (visited.has(id)) continue
-      visited.add(id)
-      cy.getElementById(id).addClass('st-path')
-      cy.getElementById(id).outgoers('edge:visible').forEach((e: EdgeSingular) => {
-        e.addClass('st-path')
-        const tId = e.target().id()
-        if (!visited.has(tId)) queue.push(tId)
-      })
-    }
+    if (!stressTestNodeId || !nodeById.has(stressTestNodeId)) return
 
     const fire = () => {
-      cy.getElementById(stressTestNodeId)
-        .outgoers('edge:visible')
-        .forEach((edge: EdgeSingular, i: number) => {
-          spawnPacket(cy, edge.id(), '#a855f7', i * 80, true)
-        })
+      let i = 0
+      for (const edge of edges) {
+        if (edge.source !== stressTestNodeId) continue
+        if (!edgeVisible(edge)) continue
+        spawnPacket(edge.id, '#a855f7', i * 80, true)
+        i++
+      }
     }
 
     fire()
-    const id = setInterval(fire, 700)
-    return () => {
-      clearInterval(id)
-      cy.elements().removeClass('st-path')
-    }
-  }, [stressTestNodeId, stressRunKey, cyRef, spawnPacket])
-
-  // ── Animation loop (single effect, hoisted function avoids self-reference lint error) ──
+    const id = window.setInterval(fire, 700)
+    return () => window.clearInterval(id)
+  }, [stressTestNodeId, stressRunKey, edges, edgeVisible, nodeById, spawnPacket])
 
   useEffect(() => {
     let rafId: number
 
-    // Using a named function declaration (hoisted) so it can reference itself without
-    // triggering the "accessed before declaration" lint rule that fires on useCallback.
     function loop(now: number) {
       rafId = requestAnimationFrame(loop)
-
       const canvas = canvasRef.current
-      const cy = cyRef.current
-      if (!canvas || !cy) return
+      if (!canvas) return
 
       const dt = Math.min(now - lastFrameRef.current, 50)
       lastFrameRef.current = now
 
       const ctx = canvas.getContext('2d')
       if (!ctx) return
-
       ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-      const pan = cy.pan()
-      const zoom = cy.zoom()
-      const z = Math.max(0.6, zoom)
-
+      const t = transformRef.current
+      const z = Math.max(0.6, t.k)
       ctx.globalCompositeOperation = 'lighter'
 
       const alive: Packet[] = []
+      const nodeCount = nodes.length
+      const allowPackets = nodeCount <= PACKET_ANIMATION_THRESHOLD || stressTestNodeId
+
+      // Congestion factor: more packets in flight → everyone slows down (simulates server saturation)
+      const inFlight = packetsRef.current.filter((p) => p.progress < 1).length
+      const congestionFactor = Math.max(0.12, 1 - Math.max(0, inFlight - 4) * 0.055)
 
       for (const pkt of packetsRef.current) {
-        if (pkt.progress < 1) {
-          pkt.progress = Math.min(1, pkt.progress + pkt.speed * dt)
+        if (!allowPackets) continue
+
+        // ── Timeout: packet dies mid-flight with a red explosion ─────────────
+        if (pkt.timedOut && pkt.timeoutAt > 0 && pkt.progress >= pkt.timeoutAt) {
+          const screenWaypoints = pkt.waypoints.map((wp) => modelToScreen(wp.x, wp.y, t))
+          const deadPos = evalPolyline(pkt.timeoutAt, screenWaypoints)
+          const count = 18
+          for (let j = 0; j < count; j++) {
+            const a = (j / count) * Math.PI * 2 + Math.random() * 0.4
+            const s = 0.06 + Math.random() * 0.14
+            sparksRef.current.push({
+              x: deadPos.x, y: deadPos.y,
+              vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+              life: 1, decay: 0.0014 + Math.random() * 0.001,
+              size: (1.4 + Math.random() * 2) * z, color: '#ef4444',
+            })
+          }
+          continue // drop the packet
         }
 
-        const srcS = modelToScreen(pkt.srcMX, pkt.srcMY, pan, zoom)
-        const tgtS = modelToScreen(pkt.tgtMX, pkt.tgtMY, pan, zoom)
-        const cp1S = pkt.cp1 ? modelToScreen(pkt.cp1.x, pkt.cp1.y, pan, zoom) : undefined
-        const cp2S = pkt.cp2 ? modelToScreen(pkt.cp2.x, pkt.cp2.y, pan, zoom) : undefined
+        // ── Stall: pause progress while stallRemaining counts down ───────────
+        const isStalling = pkt.stallAt > 0 && pkt.progress >= pkt.stallAt && pkt.stallRemaining > 0
+        if (isStalling) {
+          pkt.stallRemaining -= dt
+        } else if (pkt.progress < 1) {
+          pkt.progress = Math.min(1, pkt.progress + pkt.speed * congestionFactor * dt)
+        }
 
-        const pos = evalCurve(pkt.progress, srcS, tgtS, cp1S, cp2S)
-        if (!isFinite(pos.x) || !isFinite(pos.y)) { alive.push(pkt); continue }
+        const screenWaypoints = pkt.waypoints.map((wp) => modelToScreen(wp.x, wp.y, t))
+        const tgtS = screenWaypoints[screenWaypoints.length - 1]
 
-        // ── Comet tail ─────────────────────────────────────────────────────────
+        const pos = evalPolyline(pkt.progress, screenWaypoints)
+        if (!isFinite(pos.x) || !isFinite(pos.y)) {
+          alive.push(pkt)
+          continue
+        }
+
+        // Latency color: stalling → amber; congested → shift toward orange
+        const stallFraction = pkt.stallAt > 0 && pkt.stallRemaining > 0
+          ? Math.min(1, pkt.stallRemaining / 400)
+          : 0
+        const drawColor = isStalling
+          ? (stallFraction > 0.5 ? '#f59e0b' : '#fb923c') // amber → orange
+          : pkt.color
+
         const trailLength = 0.09
         const trailSteps = 18
-        for (let i = trailSteps; i >= 1; i--) {
-          const tTrail = pkt.progress - (i / trailSteps) * trailLength
+        for (let j = trailSteps; j >= 1; j--) {
+          const tTrail = pkt.progress - (j / trailSteps) * trailLength
           if (tTrail < 0) continue
-          const tp = evalCurve(tTrail, srcS, tgtS, cp1S, cp2S)
-          const k = 1 - i / trailSteps
+          const tp = evalPolyline(tTrail, screenWaypoints)
+          const k = 1 - j / trailSteps
           const alpha = k * k * 0.55
           const r = (0.8 + k * 2.6) * z
           ctx.beginPath()
           ctx.arc(tp.x, tp.y, r, 0, Math.PI * 2)
-          ctx.fillStyle = pkt.color + hex2(alpha * 255)
+          ctx.fillStyle = drawColor + hex2(alpha * 255)
           ctx.fill()
         }
 
-        // ── Comet head ─────────────────────────────────────────────────────────
         ctx.save()
-        ctx.shadowBlur = 24 * z
-        ctx.shadowColor = pkt.color
+        ctx.shadowBlur = (isStalling ? 34 : 24) * z
+        ctx.shadowColor = drawColor
         ctx.beginPath()
         ctx.arc(pos.x, pos.y, 5 * z, 0, Math.PI * 2)
-        ctx.fillStyle = pkt.color + '66'
+        ctx.fillStyle = drawColor + '66'
         ctx.fill()
         ctx.restore()
 
         const grad = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 8 * z)
         grad.addColorStop(0, '#ffffffee')
-        grad.addColorStop(0.35, pkt.color + 'cc')
-        grad.addColorStop(1, pkt.color + '00')
+        grad.addColorStop(0.35, drawColor + 'cc')
+        grad.addColorStop(1, drawColor + '00')
         ctx.fillStyle = grad
         ctx.beginPath()
         ctx.arc(pos.x, pos.y, 8 * z, 0, Math.PI * 2)
         ctx.fill()
+
+        // Stalling packet: pulsing warning ring
+        if (isStalling) {
+          const warnPulse = 0.5 + 0.5 * Math.sin(now * 0.012)
+          ctx.beginPath()
+          ctx.arc(pos.x, pos.y, (10 + warnPulse * 8) * z, 0, Math.PI * 2)
+          ctx.strokeStyle = '#f59e0b' + hex2(warnPulse * 160)
+          ctx.lineWidth = 1.5 * z
+          ctx.stroke()
+        }
 
         const flicker = 1 + 0.18 * Math.sin(now * 0.018 + pkt.progress * 12)
         ctx.beginPath()
@@ -467,7 +720,6 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
         ctx.fillStyle = '#ffffff'
         ctx.fill()
 
-        // ── Spark emission ─────────────────────────────────────────────────────
         if (pkt.progress < 1) {
           pkt.sparkCooldown -= dt
           if (pkt.sparkCooldown <= 0) {
@@ -475,27 +727,28 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
             const angle = Math.random() * Math.PI * 2
             const speed = 0.02 + Math.random() * 0.04
             sparksRef.current.push({
-              x: pos.x, y: pos.y,
+              x: pos.x,
+              y: pos.y,
               vx: Math.cos(angle) * speed,
               vy: Math.sin(angle) * speed,
               life: 1,
               decay: 0.0028 + Math.random() * 0.0012,
               size: (0.8 + Math.random() * 1.4) * z,
-              color: pkt.color,
+              color: drawColor,
             })
           }
         }
 
-        // ── Arrival burst ──────────────────────────────────────────────────────
         if (pkt.progress >= 1) {
           if (!pkt.arrived) {
             pkt.arrived = true
             const count = 14
-            for (let i = 0; i < count; i++) {
-              const a = (i / count) * Math.PI * 2 + Math.random() * 0.3
+            for (let j = 0; j < count; j++) {
+              const a = (j / count) * Math.PI * 2 + Math.random() * 0.3
               const s = 0.08 + Math.random() * 0.12
               sparksRef.current.push({
-                x: tgtS.x, y: tgtS.y,
+                x: tgtS.x,
+                y: tgtS.y,
                 vx: Math.cos(a) * s,
                 vy: Math.sin(a) * s,
                 life: 1,
@@ -505,9 +758,11 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
               })
             }
             if (pkt.chained) {
-              const tgtNode = cy.getElementById(pkt.tgtNodeId)
-              const chainColor = ACCENT_COLORS[tgtNode.data('type')] || pkt.color
-              spawnChainFromNode(cy, pkt.tgtNodeId, chainColor, 120)
+              const tgtNode = nodeById.get(pkt.tgtNodeId)
+              const chainColor = tgtNode
+                ? ACCENT_COLORS[String(tgtNode.data.type)] || pkt.color
+                : pkt.color
+              spawnChainFromNode(pkt.tgtNodeId, chainColor, 120)
             }
           }
           pkt.pulse = Math.min(1, pkt.pulse + 0.025)
@@ -539,7 +794,6 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
         }
       }
 
-      // ── Sparks ─────────────────────────────────────────────────────────────
       const aliveSparks: Spark[] = []
       for (const sp of sparksRef.current) {
         sp.x += sp.vx * dt
@@ -556,7 +810,6 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
         aliveSparks.push(sp)
       }
       sparksRef.current = aliveSparks
-
       ctx.globalCompositeOperation = 'source-over'
       packetsRef.current = alive
     }
@@ -564,135 +817,354 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
     lastFrameRef.current = performance.now()
     rafId = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(rafId)
-  }, [cyRef, spawnChainFromNode])
+  }, [nodeById, spawnChainFromNode, nodes.length, stressTestNodeId])
 
-  // Clear packets whenever graph crosses the large threshold
   useEffect(() => {
-    if (nodeCount > PACKET_ANIMATION_THRESHOLD) {
+    if (nodes.length > PACKET_ANIMATION_THRESHOLD && !stressTestNodeId) {
       packetsRef.current = []
       sparksRef.current = []
     }
-  }, [nodeCount])
+  }, [nodes.length, stressTestNodeId])
 
-  // Resize canvas to match container
   useEffect(() => {
     const container = containerRef.current
     const canvas = canvasRef.current
     if (!container || !canvas) return
-
-    const observer = new ResizeObserver(() => {
+    const ro = new ResizeObserver(() => {
       canvas.width = container.clientWidth
       canvas.height = container.clientHeight
     })
-    observer.observe(container)
+    ro.observe(container)
     canvas.width = container.clientWidth
     canvas.height = container.clientHeight
-    return () => observer.disconnect()
+    return () => ro.disconnect()
   }, [])
 
-  // ── Search dimming (debounced) ──────────────────────────────────────────────
+  useEffect(() => {
+    const svg = svgRef.current
+    const g = innerRef.current
+    if (!svg || !g) return
+
+    const zr = zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.02, 5])
+      .filter((ev) => !dragStateRef.current && (!ev.ctrlKey || ev.type === 'wheel') && !ev.button)
+      .on('zoom', (ev) => {
+        transformRef.current = ev.transform
+        select(g).attr('transform', ev.transform.toString())
+      })
+
+    select(svg).call(zr)
+    zoomBehaviorRef.current = zr
+    return () => {
+      select(svg).on('.zoom', null)
+    }
+  }, [])
+
+  const fit = useCallback(() => {
+    const svg = svgRef.current
+    const container = containerRef.current
+    const zb = zoomBehaviorRef.current
+    if (!svg || !container || !zb || !nodes.length) return
+
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const n of nodes) {
+      minX = Math.min(minX, n.x - n.width / 2)
+      maxX = Math.max(maxX, n.x + n.width / 2)
+      minY = Math.min(minY, n.y - n.height / 2)
+      maxY = Math.max(maxY, n.y + n.height / 2)
+    }
+    const pad = 48
+    const gw = maxX - minX + pad * 2
+    const gh = maxY - minY + pad * 2
+    const w = container.clientWidth
+    const h = container.clientHeight
+    const scale = Math.min(w / gw, h / gh, 2) * 0.92
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    const tx = w / 2 - scale * cx
+    const ty = h / 2 - scale * cy
+    const tr = zoomIdentity.translate(tx, ty).scale(scale)
+    select(svg).call(zb.transform, tr)
+  }, [nodes])
+
+  const toPng = useCallback(
+    async (options?: { scale?: number }) => {
+      const el = containerRef.current
+      if (!el) return null
+      const canvas = await html2canvas(el, {
+        scale: options?.scale ?? 2,
+        useCORS: true,
+        backgroundColor: dark ? '#0a0c10' : '#f6f7f9',
+      })
+      return canvas.toDataURL('image/png')
+    },
+    [dark],
+  )
 
   useEffect(() => {
-    const cy = cyRef.current
-    if (!cy || prevSearch.current === searchQuery) return
-    prevSearch.current = searchQuery
+    graphRef.current = { fit, toPng }
+    return () => {
+      graphRef.current = null
+    }
+  }, [graphRef, fit, toPng])
 
-    if (searchTimeout.current) clearTimeout(searchTimeout.current)
-
-    searchTimeout.current = setTimeout(() => {
-      cy.startBatch()
-      if (!searchQuery) {
-        cy.elements().removeClass('dimmed')
-      } else {
-        const q = searchQuery.toLowerCase()
-        const matched = cy.nodes().filter((n) => n.data('label').toLowerCase().includes(q))
-        cy.elements().addClass('dimmed')
-        matched.removeClass('dimmed')
-        matched.connectedEdges().removeClass('dimmed')
-      }
-      cy.endBatch()
-    }, 150)
-
-    return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current) }
-  }, [searchQuery, cyRef])
-
-  // Clear ref on unmount
+  const didInitialFitRef = useRef(false)
   useEffect(() => {
-    return () => { cyRef.current = null }
-  }, [cyRef])
+    didInitialFitRef.current = false
+  }, [elements])
 
-  // Type visibility & layout re-run
   useEffect(() => {
-    const cy = cyRef.current
-    if (!cy) return
-
-    cy.startBatch()
-    cy.nodes().forEach((n) => {
-      const type = n.data('type') as string
-      if (visibleTypes.has(type)) n.removeClass('hidden')
-      else n.addClass('hidden')
-    })
-    cy.edges().forEach((e) => {
-      const srcVisible = visibleTypes.has(e.source().data('type'))
-      const tgtVisible = visibleTypes.has(e.target().data('type'))
-      if (srcVisible && tgtVisible) e.removeClass('hidden')
-      else e.addClass('hidden')
-    })
-    cy.endBatch()
-
-    if (layoutTimeout.current) clearTimeout(layoutTimeout.current)
-    layoutTimeout.current = setTimeout(() => {
-      const visibleNodes = cy.nodes(':visible')
-      if (visibleNodes.length > 0) {
-        cy.layout(pickLayout(layout, visibleNodes.length, rankDir)).run()
-      }
-    }, 200)
-
-    return () => { if (layoutTimeout.current) clearTimeout(layoutTimeout.current) }
-  }, [visibleTypes, layout, rankDir, cyRef])
-
-  // Complexity overlay: add/remove class on all nodes
-  useEffect(() => {
-    const cy = cyRef.current
-    if (!cy) return
-    cy.batch(() => {
-      if (complexityOverlay) cy.nodes().addClass('cc-overlay')
-      else cy.nodes().removeClass('cc-overlay')
-    })
-  }, [complexityOverlay, cyRef])
-
-  // ── Render ──────────────────────────────────────────────────────────────────
+    if (!nodes.length || didInitialFitRef.current) return
+    didInitialFitRef.current = true
+    const id = requestAnimationFrame(() => fit())
+    return () => cancelAnimationFrame(id)
+  }, [nodes.length, fit, elements])
 
   return (
     <div ref={containerRef} style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <CytoscapeComponent
-        elements={elements}
-        stylesheet={stylesheet}
-        layout={layoutConfig}
-        style={{ width: '100%', height: '100%' }}
-        cy={(cy) => {
-          if (cyRef.current === cy) return
-          cyRef.current = cy
-
-          cy.boxSelectionEnabled(false)
-
-          cy.on('tap', 'node', (evt) => {
-            const node = evt.target
-            cy.elements().removeClass('highlighted')
-            node.connectedEdges().addClass('highlighted')
-            onNodeSelect(node.id())
-          })
-
-          cy.on('tap', (evt) => {
-            if (evt.target === cy) {
-              cy.elements().removeClass('highlighted')
-              onNodeSelect(null)
+      <svg
+        ref={svgRef}
+        role="img"
+        aria-label="Execution graph"
+        style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab', touchAction: 'none' }}
+      >
+        <defs>
+          <marker
+            id="arrow-def"
+            markerWidth="9"
+            markerHeight="9"
+            refX="8"
+            refY="4.5"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,9 L9,4.5 z" fill={edgeArrow} />
+          </marker>
+          <marker
+            id="arrow-hi"
+            markerWidth="9"
+            markerHeight="9"
+            refX="8"
+            refY="4.5"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,9 L9,4.5 z" fill={HIGHLIGHT_COLOR} />
+          </marker>
+          <marker
+            id="arrow-st"
+            markerWidth="9"
+            markerHeight="9"
+            refX="8"
+            refY="4.5"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,9 L9,4.5 z" fill="#a855f7" />
+          </marker>
+        </defs>
+        <g ref={innerRef}>
+          <rect
+            x={-100000}
+            y={-100000}
+            width={200000}
+            height={200000}
+            fill="transparent"
+            onClick={tapBg}
+            style={{ pointerEvents: 'all' }}
+          />
+          {edges.map((e) => {
+            if (!edgeVisible(e)) return null
+            if (collapsedNodes.has(e.source) || hiddenNodeIds.has(e.source) || hiddenNodeIds.has(e.target)) return null
+            const ns = effectiveNodeById.get(e.source)
+            const nt = effectiveNodeById.get(e.target)
+            if (!ns || !nt) return null
+            const { d: dStr, lx, ly } = orthogonalPath(ns, nt, rankDir)
+            const mid = { x: lx, y: ly }
+            const lbl = labelForEdge(e.data, dark)
+            const hi = highlightEdgeIds.has(e.id)
+            const st = stressSets.edges.has(e.id)
+            let stroke = edgeLine
+            let sw = 1.75
+            let mo = 'url(#arrow-def)'
+            let op = 1
+            if (st) {
+              stroke = '#a855f7'
+              sw = 2
+              mo = 'url(#arrow-st)'
+              op = 0.7
             }
-          })
-        }}
-      />
+            if (hi) {
+              stroke = HIGHLIGHT_COLOR
+              sw = 1.5
+              mo = 'url(#arrow-hi)'
+              op = 1
+            }
+            if (searchMatch && !(searchMatch.has(e.source) || searchMatch.has(e.target))) {
+              op *= 0.02
+            }
+            return (
+              <g key={e.id}>
+                <path
+                  d={dStr}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={sw}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={op}
+                  markerEnd={mo}
+                  style={{ pointerEvents: 'auto' }}
+                />
+                {lbl && op > 0.05 && (
+                  <g transform={`translate(${mid.x},${mid.y})`}>
+                    <text
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill={lbl.fill}
+                      fontSize={9}
+                      fontFamily="ui-monospace, monospace"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      <tspan
+                        dx={0}
+                        dy={-8}
+                        paintOrder="stroke fill"
+                        stroke={lbl.bg}
+                        strokeWidth={6}
+                        strokeLinejoin="round"
+                      >
+                        {lbl.text}
+                      </tspan>
+                    </text>
+                  </g>
+                )}
+              </g>
+            )
+          })}
 
-      {/* Canvas overlay for packet animations — pointer-events:none so clicks pass through */}
+          {effectiveNodes.map((n) => {
+            if (hiddenNodeIds.has(n.id)) return null
+            const typeOk = isTypeVisible(n.data.type)
+            const nodeDim = searchMatch && !searchMatch.has(n.id)
+            const opacity = !typeOk ? 0 : nodeDim ? 0.07 : 1
+            const stN = stressSets.nodes.has(n.id)
+            const selected = selectedNodeId === n.id
+            const { bg, border, borderW, accent } = cardColors(n, dark, complexityOverlay, selected, stN)
+
+            const rawLabel = String(n.data.label ?? n.id)
+            const { className, method } = splitNodeLabel(rawLabel, n.data.method as string | undefined)
+            const methodDisplay = method && !method.includes('(') ? method + '()' : method
+            const type = String(n.data.type ?? '')
+            const w = n.width
+            const h = CARD_H
+            const hw = w / 2
+            const hh = h / 2
+
+            const labelColor = dark ? '#e6edf3' : '#0d1117'
+            const mutedColor = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'
+
+            const MAX_CLASS = 24
+            const MAX_METHOD = 26
+            const classDisplay = className.length > MAX_CLASS ? className.slice(0, MAX_CLASS - 1) + '…' : className
+            const methodTrimmed = methodDisplay.length > MAX_METHOD ? methodDisplay.slice(0, MAX_METHOD - 1) + '…' : methodDisplay
+
+            return (
+              <g
+                key={n.id}
+                transform={`translate(${n.x},${n.y})`}
+                opacity={opacity}
+                style={{ pointerEvents: typeOk && opacity > 0.05 ? 'auto' : 'none', cursor: 'grab' }}
+                onPointerDown={(ev) => handleNodePointerDown(ev, n.id, n.x, n.y)}
+                onPointerMove={(ev) => handleNodePointerMove(ev, n.id)}
+                onPointerUp={(ev) => handleNodePointerUp(ev, n.id)}
+                onClick={(ev) => { ev.stopPropagation(); if (!isDraggingRef.current) tapNode(n.id) }}
+              >
+                {/* Glow ring when selected */}
+                {selected && (
+                  <rect x={-hw - 3} y={-hh - 3} width={w + 6} height={h + 6}
+                    rx={13} fill="none" stroke={accent} strokeWidth={6} opacity={0.15} />
+                )}
+
+                {/* Card background */}
+                <rect x={-hw} y={-hh} width={w} height={h} rx={10}
+                  fill={bg} stroke={border} strokeWidth={borderW}
+                  filter={Boolean(n.data.hasN1) && !complexityOverlay
+                    ? 'drop-shadow(0 0 8px rgba(244,67,54,0.4))' : undefined}
+                />
+
+                {/* Type dot */}
+                <circle cx={-hw + 14} cy={-hh + 18} r={4} fill={accent} />
+
+                {/* Type label */}
+                <text x={-hw + 24} y={-hh + 22} fontSize={10}
+                  fontFamily="ui-monospace, monospace" fill={accent} opacity={0.9}
+                  style={{ pointerEvents: 'none' }}>
+                  {type}
+                </text>
+
+                {/* N+1 badge */}
+                {Boolean(n.data.hasN1) && (
+                  <text x={hw - 10} y={-hh + 22} fontSize={10} textAnchor="end"
+                    fontFamily="ui-monospace, monospace" fill="#F44336"
+                    style={{ pointerEvents: 'none' }}>
+                    N+1
+                  </text>
+                )}
+
+                {/* Class name */}
+                <text x={-hw + 14} y={-hh + 46} fontSize={13} fontWeight={700}
+                  fontFamily="ui-sans-serif, system-ui, -apple-system, sans-serif"
+                  fill={labelColor} style={{ pointerEvents: 'none' }}>
+                  {classDisplay}
+                </text>
+
+                {/* Method */}
+                {methodTrimmed && (
+                  <text x={-hw + 14} y={-hh + 64} fontSize={11}
+                    fontFamily="ui-monospace, monospace" fill={mutedColor}
+                    style={{ pointerEvents: 'none' }}>
+                    ↻ {methodTrimmed}
+                  </text>
+                )}
+
+
+
+                {/* Collapse / expand toggle — shown when node has > 4 visible children or is already collapsed */}
+                {(collapsedNodes.has(n.id) || (outDegree.get(n.id) ?? 0) > 4) && (
+                  <g
+                    transform={`translate(${hw + 2}, 0)`}
+                    onPointerDown={(ev) => ev.stopPropagation()}
+                    onClick={(ev) => toggleCollapse(ev, n.id)}
+                    style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                  >
+                    <rect x={0} y={-10} width={64} height={20} rx={10}
+                      fill={collapsedNodes.has(n.id) ? accent : (dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)')}
+                      stroke={accent} strokeWidth={1}
+                    />
+                    <text
+                      x={32} y={0}
+                      textAnchor="middle" dominantBaseline="middle"
+                      fill={collapsedNodes.has(n.id) ? '#fff' : accent}
+                      fontSize={10} fontWeight={700}
+                      fontFamily="ui-monospace, monospace"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {collapsedNodes.has(n.id)
+                        ? `▶ ${hiddenDescendantCount.get(n.id) ?? outDegree.get(n.id)} hidden`
+                        : '▾ fold'}
+                    </text>
+                  </g>
+                )}
+              </g>
+            )
+          })}
+        </g>
+      </svg>
+
       <canvas
         ref={canvasRef}
         style={{
@@ -700,14 +1172,15 @@ export function GraphView({ elements, layout, rankDir, searchQuery, visibleTypes
           top: 0,
           left: 0,
           pointerEvents: 'none',
+          width: '100%',
+          height: '100%',
         }}
       />
 
-      {/* Complexity overlay legend */}
       {complexityOverlay && (
         <div className="cc-legend">
           <div className="cc-legend-title">Cyclomatic Complexity</div>
-          {CC_TIERS.map(tier => (
+          {CC_TIERS.map((tier) => (
             <div key={tier.label} className="cc-legend-row">
               <span className="cc-legend-swatch" style={{ background: tier.border }} />
               <span className="cc-legend-label" style={{ color: tier.border }}>
