@@ -80,7 +80,8 @@ class ProjectAnalyzer
         }
 
         $projectRoot = rtrim($projectRoot, '/');
-        $projectName = basename($projectRoot);
+        $appName = function_exists('config') ? config('app.name') : null;
+        $projectName = (is_string($appName) && $appName !== '') ? $appName : 'Laravel Brain';
         $analyzedAt = date('c');
 
         $this->emit('project:start', ['name' => $projectName, 'message' => "Analyzing project: {$projectName}"]);
