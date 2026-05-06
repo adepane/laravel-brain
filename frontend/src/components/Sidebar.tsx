@@ -11,7 +11,7 @@ import { buildSequenceDiagram } from '../utils/sequenceUtils'
 
 const MIN_WIDTH = 200
 const MAX_WIDTH = 640
-const DEFAULT_WIDTH = 300
+const DEFAULT_WIDTH = 320
 
 interface Props {
   selectedId: string | null
@@ -40,6 +40,8 @@ const TYPE_COLORS: Record<string, string> = {
   filament_widget:           '#06B6D4',
   filament_relation_manager: '#0891B2',
 }
+
+type TabId = 'info' | 'flow' | 'source' | 'edges' | 'stress'
 
 export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange }: Props) {
   const [width, setWidth] = useState(DEFAULT_WIDTH)
@@ -73,24 +75,20 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
     window.addEventListener('mouseup', onUp)
   }, [width])
 
-  const [sourceOpen, setSourceOpen] = useState(false)
-  const [flowOpen, setFlowOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabId>('info')
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false)
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
-  const [seqOpen, setSeqOpen] = useState(false)
   const [isSeqModalOpen, setIsSeqModalOpen] = useState(false)
   const [aiCopied, setAiCopied] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
 
-  // Adjust state during render when selection changes (avoids Effect cascading render)
+  // Reset tab + modal state when selection changes (avoids Effect cascading render)
   const [prevSelectedId, setPrevSelectedId] = useState(selectedId)
   if (selectedId !== prevSelectedId) {
     setPrevSelectedId(selectedId)
-    setSourceOpen(false)
-    setFlowOpen(false)
+    setActiveTab('info')
     setIsFlowModalOpen(false)
     setIsSourceModalOpen(false)
-    setSeqOpen(false)
     setIsSeqModalOpen(false)
     setAiCopied(false)
     setAiLoading(false)
@@ -200,7 +198,6 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
   const hasN1 = !!node.data?.hasN1
 
   const dbQueries = (node.data?.dbQueries ?? []) as DbQuery[]
-
   const relationships = (node.data?.relationships ?? []) as Array<{ type: string; related: string }>
 
   const displayData = Object.entries(node.data ?? {}).filter(
@@ -215,10 +212,34 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
       !(Array.isArray(val) && val.length === 0)
   )
 
+  const hasFlow = flowSteps.length > 0 || !!sequenceDiagram
+  const hasSource = !!filePath
+  const hasEdges = incomingEdges.length > 0 || outgoingEdges.length > 0
+  const isRoute = node.type === 'route'
+
+  // If the active tab became unavailable after a node change, fall back to info
+  const safeTab: TabId =
+    (activeTab === 'flow' && !hasFlow) ||
+    (activeTab === 'source' && !hasSource) ||
+    (activeTab === 'edges' && !hasEdges) ||
+    (activeTab === 'stress' && !isRoute)
+      ? 'info'
+      : activeTab
+
+  const tabs: { id: TabId; label: string; count?: number }[] = [
+    { id: 'info', label: 'Info' },
+    ...(hasFlow ? [{ id: 'flow' as TabId, label: 'Flow' }] : []),
+    ...(hasSource ? [{ id: 'source' as TabId, label: 'Source' }] : []),
+    ...(hasEdges ? [{ id: 'edges' as TabId, label: 'Edges', count: incomingEdges.length + outgoingEdges.length }] : []),
+    ...(isRoute ? [{ id: 'stress' as TabId, label: 'Stress' }] : []),
+  ]
+
   return (
     <div className="sidebar-resizable" style={{ width }}>
       <div className="sidebar-drag-handle" onMouseDown={onMouseDown} title="Drag to resize" />
       <div className="sidebar">
+
+        {/* Header */}
         <div className="sidebar-header">
           <div className="sidebar-header-actions">
             <button
@@ -242,7 +263,7 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
               </span>
             )}
           </div>
-          <h2>{node.label}</h2>
+          <h2 className="sidebar-node-title">{node.label}</h2>
         </div>
 
         {/* Smell badges */}
@@ -266,238 +287,257 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
           </div>
         )}
 
-        {/* Code Metrics */}
-        {metrics && (
-          <div className="sidebar-section sidebar-section--metrics">
-            <h3>Code Metrics</h3>
-            <div className="metrics-grid">
-              <div className="metric-item">
-                <span className="metric-value">{metrics.lineCount}</span>
-                <span className="metric-label">Lines</span>
-              </div>
-              <div className="metric-item">
-                <span className="metric-value" style={{ color: metrics.cyclomaticComplexity > 10 ? '#FF6D00' : 'inherit' }}>
-                  {metrics.cyclomaticComplexity}
-                </span>
-                <span className="metric-label">Complexity</span>
-              </div>
-              <div className="metric-item">
-                <span className="metric-value">{metrics.statementCount}</span>
-                <span className="metric-label">Statements</span>
-              </div>
-              <div className="metric-item">
-                <span className="metric-value">{metrics.paramCount}</span>
-                <span className="metric-label">Params</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Flowchart — shown first for action/service/repository nodes */}
-        {flowSteps.length > 0 && (
-          <div className="sidebar-section sidebar-section--flowchart">
-            <div className="source-toggle-wrapper">
-              <div className="source-toggle" onClick={() => setFlowOpen((o) => !o)}>
-                <h3>Method Flow</h3>
-                <span className={`source-toggle-icon${flowOpen ? ' source-toggle-icon--open' : ''}`} />
-              </div>
-              <button
-                className="flow-popup-btn"
-                title="Open in large view"
-                onClick={() => setIsFlowModalOpen(true)}
-              >
-                ⤢
-              </button>
-            </div>
-
-            {flowOpen && <FlowchartView steps={flowSteps} isFatMethod={fatMethod} />}
-
-            {isFlowModalOpen && (
-              <FlowchartModal
-                steps={flowSteps}
-                title={node.label}
-                isFatMethod={fatMethod}
-                onClose={() => setIsFlowModalOpen(false)}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Sequence Diagram — only for route nodes */}
-        {sequenceDiagram && (
-          <div className="sidebar-section sidebar-section--sequence">
-            <div className="source-toggle-wrapper">
-              <div className="source-toggle" onClick={() => setSeqOpen((o) => !o)}>
-                <h3>Sequence Diagram</h3>
-                <span className={`source-toggle-icon${seqOpen ? ' source-toggle-icon--open' : ''}`} />
-              </div>
-              <button
-                className="flow-popup-btn"
-                title="Open in large view"
-                onClick={() => setIsSeqModalOpen(true)}
-              >
-                ⤢
-              </button>
-            </div>
-
-            {seqOpen && (
-              <SequenceDiagramView
-                diagram={sequenceDiagram}
-                title={node.label}
-                theme={theme}
-              />
-            )}
-
-            {isSeqModalOpen && (
-              <SequenceDiagramModal
-                diagram={sequenceDiagram}
-                title={node.label}
-                theme={theme}
-                onClose={() => setIsSeqModalOpen(false)}
-              />
-            )}
-          </div>
-        )}
-
-        {/* DB Queries */}
-        {dbQueries.length > 0 && (
-          <div className="sidebar-section sidebar-section--queries">
-            <h3>DB Queries</h3>
-            <div className="query-list">
-              {dbQueries.map((q, i) => {
-                const tableName = q.table || (q.model ? q.model.split('\\').pop()! : '?')
-                const isWrite = ['insert', 'update', 'delete', 'statement'].includes(q.operation)
-                return (
-                  <div key={i} className="query-item">
-                    <span className={`query-op query-op--${isWrite ? 'write' : 'read'}`}>
-                      {q.operation}
-                    </span>
-                    <span className="query-table" title={q.model || undefined}>
-                      {tableName}
-                    </span>
-                    {q.type === 'raw' && (
-                      <span className="query-badge query-badge--raw">SQL</span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {node.type === 'filament_resource' && !!node.data?.route && (
-          <div className="sidebar-section">
-            <h3>Filament URL</h3>
-            <div className="prop-row">
-              <span className="prop-key">route</span>
-              <span className="prop-value" style={{ fontFamily: 'monospace', color: '#A855F7' }}>
-                {String(node.data.route)}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {relationships.length > 0 && (
-          <div className="sidebar-section">
-            <h3>Relationships</h3>
-            {relationships.map((rel, i) => (
-              <div key={i} className="prop-row">
-                <span className="prop-key" style={{ color: '#9C27B0' }}>{rel.type}</span>
-                <span className="prop-value">
-                  {rel.related.split('\\').pop() ?? rel.related}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="sidebar-section">
-          <h3>Properties</h3>
-          {displayData.map(([key, val]) => (
-            <div key={key} className="prop-row">
-              <span className="prop-key">{key}</span>
-              <span className="prop-value">
-                {Array.isArray(val)
-                  ? val.map(item =>
-                      typeof item === 'object' && item !== null
-                        ? Object.values(item as Record<string, unknown>).join(' ')
-                        : String(item)
-                    ).join(', ') || '—'
-                  : String(val) || '—'}
-              </span>
-            </div>
+        {/* Tab bar */}
+        <div className="sidebar-tab-bar">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`sidebar-tab${safeTab === tab.id ? ' sidebar-tab--active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+              {tab.count !== undefined && (
+                <span className="sidebar-tab-badge">{tab.count}</span>
+              )}
+            </button>
           ))}
         </div>
 
-        {node.type === 'route' && selectedId && (
-          <StressTestPanel
-            key={selectedId}
-            method={String(node.data?.method ?? 'GET')}
-            uri={String(node.data?.uri ?? '/')}
-            theme={theme}
-            selectedId={selectedId}
-            onStressChange={onStressChange}
-          />
-        )}
+        {/* Tab content */}
+        <div className="sidebar-tab-content">
 
-        {filePath && (
-          <div className="sidebar-section sidebar-section--source">
-            <div className="source-toggle-wrapper">
-              <div className="source-toggle" onClick={() => setSourceOpen((o) => !o)}>
-                <h3>Source Code</h3>
-                <span className={`source-toggle-icon${sourceOpen ? ' source-toggle-icon--open' : ''}`} />
+          {/* ── Info tab ── */}
+          {safeTab === 'info' && (
+            <>
+              {metrics && (
+                <div className="sidebar-section sidebar-section--metrics">
+                  <h3>Code Metrics</h3>
+                  <div className="metrics-grid">
+                    <div className="metric-item">
+                      <span className="metric-value">{metrics.lineCount}</span>
+                      <span className="metric-label">Lines</span>
+                    </div>
+                    <div className="metric-item">
+                      <span
+                        className="metric-value"
+                        style={{ color: metrics.cyclomaticComplexity > 10 ? '#FF6D00' : 'inherit' }}
+                      >
+                        {metrics.cyclomaticComplexity}
+                      </span>
+                      <span className="metric-label">Complexity</span>
+                    </div>
+                    <div className="metric-item">
+                      <span className="metric-value">{metrics.statementCount}</span>
+                      <span className="metric-label">Statements</span>
+                    </div>
+                    <div className="metric-item">
+                      <span className="metric-value">{metrics.paramCount}</span>
+                      <span className="metric-label">Params</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {node.type === 'filament_resource' && !!node.data?.route && (
+                <div className="sidebar-section">
+                  <h3>Filament URL</h3>
+                  <div className="prop-row">
+                    <span className="prop-key">route</span>
+                    <span className="prop-value" style={{ fontFamily: 'monospace', color: '#A855F7' }}>
+                      {String(node.data.route)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {relationships.length > 0 && (
+                <div className="sidebar-section">
+                  <h3>Relationships</h3>
+                  {relationships.map((rel, i) => (
+                    <div key={i} className="prop-row">
+                      <span className="prop-key" style={{ color: '#9C27B0' }}>{rel.type}</span>
+                      <span className="prop-value">
+                        {rel.related.split('\\').pop() ?? rel.related}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {dbQueries.length > 0 && (
+                <div className="sidebar-section sidebar-section--queries">
+                  <h3>DB Queries</h3>
+                  <div className="query-list">
+                    {dbQueries.map((q, i) => {
+                      const tableName = q.table || (q.model ? q.model.split('\\').pop()! : '?')
+                      const isWrite = ['insert', 'update', 'delete', 'statement'].includes(q.operation)
+                      return (
+                        <div key={i} className="query-item">
+                          <span className={`query-op query-op--${isWrite ? 'write' : 'read'}`}>
+                            {q.operation}
+                          </span>
+                          <span className="query-table" title={q.model || undefined}>
+                            {tableName}
+                          </span>
+                          {q.type === 'raw' && (
+                            <span className="query-badge query-badge--raw">SQL</span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="sidebar-section">
+                <h3>Properties</h3>
+                {displayData.map(([key, val]) => (
+                  <div key={key} className="prop-row">
+                    <span className="prop-key">{key}</span>
+                    <span className="prop-value">
+                      {Array.isArray(val)
+                        ? val.map(item =>
+                            typeof item === 'object' && item !== null
+                              ? Object.values(item as Record<string, unknown>).join(' ')
+                              : String(item)
+                          ).join(', ') || '—'
+                        : String(val) || '—'}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <button 
-                className="flow-popup-btn" 
-                title="Open in large view"
-                onClick={() => setIsSourceModalOpen(true)}
-              >
-                ⤢
-              </button>
+            </>
+          )}
+
+          {/* ── Flow tab ── */}
+          {safeTab === 'flow' && (
+            <>
+              {flowSteps.length > 0 && (
+                <div className="sidebar-section sidebar-section--flowchart">
+                  <div className="sidebar-section-header">
+                    <h3>Method Flow</h3>
+                    <button
+                      className="flow-popup-btn"
+                      title="Open in large view"
+                      onClick={() => setIsFlowModalOpen(true)}
+                    >
+                      ⤢
+                    </button>
+                  </div>
+                  <FlowchartView steps={flowSteps} isFatMethod={fatMethod} />
+                  {isFlowModalOpen && (
+                    <FlowchartModal
+                      steps={flowSteps}
+                      title={node.label}
+                      isFatMethod={fatMethod}
+                      onClose={() => setIsFlowModalOpen(false)}
+                    />
+                  )}
+                </div>
+              )}
+
+              {sequenceDiagram && (
+                <div className="sidebar-section sidebar-section--sequence">
+                  <div className="sidebar-section-header">
+                    <h3>Sequence Diagram</h3>
+                    <button
+                      className="flow-popup-btn"
+                      title="Open in large view"
+                      onClick={() => setIsSeqModalOpen(true)}
+                    >
+                      ⤢
+                    </button>
+                  </div>
+                  <SequenceDiagramView
+                    diagram={sequenceDiagram}
+                    title={node.label}
+                    theme={theme}
+                  />
+                  {isSeqModalOpen && (
+                    <SequenceDiagramModal
+                      diagram={sequenceDiagram}
+                      title={node.label}
+                      theme={theme}
+                      onClose={() => setIsSeqModalOpen(false)}
+                    />
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Source tab ── */}
+          {safeTab === 'source' && filePath && (
+            <div className="sidebar-section sidebar-section--source">
+              <div className="sidebar-section-header">
+                <h3>Source Code</h3>
+                <button
+                  className="flow-popup-btn"
+                  title="Open in large view"
+                  onClick={() => setIsSourceModalOpen(true)}
+                >
+                  ⤢
+                </button>
+              </div>
+              <SourceView filePath={filePath} highlightLine={highlightLine} theme={theme} />
+              {isSourceModalOpen && (
+                <SourceModal
+                  filePath={filePath}
+                  highlightLine={highlightLine}
+                  theme={theme}
+                  onClose={() => setIsSourceModalOpen(false)}
+                />
+              )}
             </div>
-            
-            {sourceOpen && <SourceView filePath={filePath} highlightLine={highlightLine} theme={theme} />}
+          )}
 
-            {isSourceModalOpen && (
-              <SourceModal 
-                filePath={filePath} 
-                highlightLine={highlightLine} 
-                theme={theme} 
-                onClose={() => setIsSourceModalOpen(false)} 
-              />
-            )}
-          </div>
-        )}
-
-        {outgoingEdges.length > 0 && (
-          <div className="sidebar-section">
-            <h3>Outgoing ({outgoingEdges.length})</h3>
-            {outgoingEdges.map((e) => {
-              const target = nodeMap.get(e.target)
-              return (
-                <div key={e.id} className="edge-row">
-                  <span className="edge-label">{e.label}</span>
-                  <span className="edge-target">{target?.label ?? e.target}</span>
+          {/* ── Edges tab ── */}
+          {safeTab === 'edges' && (
+            <>
+              {outgoingEdges.length > 0 && (
+                <div className="sidebar-section">
+                  <h3>Outgoing ({outgoingEdges.length})</h3>
+                  {outgoingEdges.map((e) => {
+                    const target = nodeMap.get(e.target)
+                    return (
+                      <div key={e.id} className="edge-row">
+                        <span className="edge-label">{e.label}</span>
+                        <span className="edge-target">{target?.label ?? e.target}</span>
+                      </div>
+                    )
+                  })}
                 </div>
-              )
-            })}
-          </div>
-        )}
-
-        {incomingEdges.length > 0 && (
-          <div className="sidebar-section">
-            <h3>Incoming ({incomingEdges.length})</h3>
-            {incomingEdges.map((e) => {
-              const source = nodeMap.get(e.source)
-              return (
-                <div key={e.id} className="edge-row">
-                  <span className="edge-target">{source?.label ?? e.source}</span>
-                  <span className="edge-label">{e.label}</span>
+              )}
+              {incomingEdges.length > 0 && (
+                <div className="sidebar-section">
+                  <h3>Incoming ({incomingEdges.length})</h3>
+                  {incomingEdges.map((e) => {
+                    const source = nodeMap.get(e.source)
+                    return (
+                      <div key={e.id} className="edge-row">
+                        <span className="edge-target">{source?.label ?? e.source}</span>
+                        <span className="edge-label">{e.label}</span>
+                      </div>
+                    )
+                  })}
                 </div>
-              )
-            })}
-          </div>
-        )}
+              )}
+            </>
+          )}
+
+          {/* ── Stress tab ── */}
+          {safeTab === 'stress' && isRoute && selectedId && (
+            <StressTestPanel
+              key={selectedId}
+              method={String(node.data?.method ?? 'GET')}
+              uri={String(node.data?.uri ?? '/')}
+              theme={theme}
+              selectedId={selectedId}
+              onStressChange={onStressChange}
+            />
+          )}
+
+        </div>
       </div>
     </div>
   )

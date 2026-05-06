@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LaraMint\LaravelBrain\Parser;
 
+use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
@@ -29,7 +30,11 @@ class PhpFileParser
             return ['ast' => null, 'useMap' => []];
         }
 
-        $ast = $this->parser->parse($code);
+        try {
+            $ast = $this->parser->parse($code);
+        } catch (Error) {
+            return ['ast' => null, 'useMap' => []];
+        }
         $useMap = $this->extractUseMap($ast ?? []);
 
         return ['ast' => $ast, 'useMap' => $useMap];
