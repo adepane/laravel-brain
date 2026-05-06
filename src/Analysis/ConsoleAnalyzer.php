@@ -45,8 +45,8 @@ class ConsoleAnalyzer
 
     /**
      * @param  string[]  $consoleRoutePaths  Glob patterns for closure-command route files (basename must contain "console").
-     * @param  string[]  $classPaths         Glob patterns for directories containing Command classes.
-     * @param  string[]  $kernelPaths        Glob patterns pointing to Console Kernel file(s).
+     * @param  string[]  $classPaths  Glob patterns for directories containing Command classes.
+     * @param  string[]  $kernelPaths  Glob patterns pointing to Console Kernel file(s).
      */
     public function __construct(
         array $consoleRoutePaths = ['routes/*/*.php'],
