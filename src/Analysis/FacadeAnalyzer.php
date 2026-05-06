@@ -315,7 +315,6 @@ final class FacadeAnalyzer
     /**
      * Return the top-level statements, unwrapping a Namespace_ wrapper if present.
      *
-     * @param  mixed  $ast
      * @return Node\Stmt[]
      */
     private function topLevelStmts(mixed $ast): array

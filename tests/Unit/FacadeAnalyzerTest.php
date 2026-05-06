@@ -5,7 +5,6 @@ declare(strict_types=1);
 use LaraMint\LaravelBrain\Analysis\ContainerBindingRecord;
 use LaraMint\LaravelBrain\Analysis\ContainerBindingRegistry;
 use LaraMint\LaravelBrain\Analysis\FacadeAnalyzer;
-use LaraMint\LaravelBrain\Analysis\FacadeRegistry;
 
 $fixtureProject = __DIR__.'/../fixtures/laravel-project';
 
