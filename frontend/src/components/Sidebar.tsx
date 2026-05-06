@@ -42,6 +42,7 @@ const TYPE_COLORS: Record<string, string> = {
   trait:      '#a78bfa',
   abstract_class: '#94a3b8',
   service_provider: '#ca8a04',
+  facade:     '#00BCD4',
   filament_panel:            '#7C3AED',
   filament_resource:         '#A855F7',
   filament_page:             '#C084FC',

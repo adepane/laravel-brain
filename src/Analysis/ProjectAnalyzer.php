@@ -180,9 +180,15 @@ class ProjectAnalyzer
         $bindingCount = count($bindingRegistry->all());
         $this->emit('step:done', ['step' => 'container_bindings', 'count' => $bindingCount, 'unit' => 'binding', 'message' => "    Found {$bindingCount} container binding(s)"]);
 
+        $this->emit('step:start', ['step' => 'facades', 'label' => 'Scanning facades', 'message' => '  → Scanning application facades...']);
+        $facadeRegistry = (new FacadeAnalyzer)->analyze($projectRoot);
+        $facadeRegistry->resolveWith($bindingRegistry);
+        $facadeCount = count($facadeRegistry->all());
+        $this->emit('step:done', ['step' => 'facades', 'count' => $facadeCount, 'unit' => 'facade', 'message' => "    Found {$facadeCount} facade(s)"]);
+
         $this->emit('step:start', ['step' => 'graph', 'label' => 'Building graph', 'message' => '  → Building graph...']);
         $fullGraph = $this->graphBuilder->build(
-            $projectName, $routes, $middlewareRegistry, $controllers, $callChain, $models, $projectRoot, $dbQueryMap, $bindingRegistry,
+            $projectName, $routes, $middlewareRegistry, $controllers, $callChain, $models, $projectRoot, $dbQueryMap, $bindingRegistry, $facadeRegistry,
         );
         $this->graphBuilder->addConsoleCommands($commands, $schedules, $commandEdges);
         $this->graphBuilder->addChannels($channels, $channelEdges);

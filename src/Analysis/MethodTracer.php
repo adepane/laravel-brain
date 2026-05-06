@@ -188,12 +188,23 @@ class MethodTracer
             return [];
         }
 
+        $originalMethod = $method;
         $methodAst = $classInfo['methods'][$method] ?? null;
         if ($methodAst === null) {
             $method = $this->fallbackEntryMethod($fqcn, $method, $classInfo['methods']);
             $methodAst = $classInfo['methods'][$method] ?? null;
         }
         if ($methodAst === null) {
+            // Method not defined in this class — transparently delegate to parent.
+            $parentFqcn = $classInfo['parent'] ?? null;
+            if (
+                $parentFqcn !== null
+                && ! str_starts_with($parentFqcn, 'Illuminate\\')
+                && ! str_starts_with($parentFqcn, 'Laravel\\')
+            ) {
+                return $this->traceDeep($parentFqcn, $originalMethod, $depth);
+            }
+
             return [];
         }
 

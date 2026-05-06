@@ -9,6 +9,7 @@ use LaraMint\LaravelBrain\Analysis\ChannelDefinition;
 use LaraMint\LaravelBrain\Analysis\ConsoleCommandDefinition;
 use LaraMint\LaravelBrain\Analysis\ContainerBindingRecord;
 use LaraMint\LaravelBrain\Analysis\ContainerBindingRegistry;
+use LaraMint\LaravelBrain\Analysis\FacadeRegistry;
 use LaraMint\LaravelBrain\Analysis\ControllerDefinition;
 use LaraMint\LaravelBrain\Analysis\DbQuery;
 use LaraMint\LaravelBrain\Analysis\FilamentPageDefinition;
@@ -24,6 +25,7 @@ use LaraMint\LaravelBrain\Analysis\PhpStructureInspector;
 use LaraMint\LaravelBrain\Analysis\RouteDefinition;
 use LaraMint\LaravelBrain\Analysis\ScheduleEntry;
 use LaraMint\LaravelBrain\Analysis\ValidationRulesExtractor;
+use LaraMint\LaravelBrain\Parser\PhpExtendsFqcnResolver;
 use LaraMint\LaravelBrain\Parser\PhpFileParser;
 use PhpParser\Node as PhpNode;
 use PhpParser\NodeTraverser;
@@ -70,10 +72,12 @@ class GraphBuilder
 
     private ?ContainerBindingRegistry $bindingRegistry = null;
 
+    private ?FacadeRegistry $facadeRegistry = null;
+
     private ?ValidationRulesExtractor $validationRulesExtractor = null;
 
     /**
-     * Dedupe keys for container binding edges (source|kind|target tail).
+     * Dedupe keys for container binding and facade resolution edges.
      *
      * @var array<string, true>
      */
@@ -182,46 +186,12 @@ class GraphBuilder
      */
     private function extractMethodFlowSteps(string $fqcn, string $method): array
     {
-        $file = $this->resolveFile($fqcn);
-        if ($file === '') {
+        $found = $this->findMethodNodeInChain($fqcn, $method);
+        if ($found === null) {
             return [];
         }
 
-        if (! isset($this->parseCache[$file])) {
-            $this->parseCache[$file] = $this->parser->parse($file);
-        }
-        $parsed = $this->parseCache[$file];
-        if (! $parsed || ! $parsed['ast']) {
-            return [];
-        }
-
-        $traverser = new NodeTraverser;
-        $finder = new class($method) extends NodeVisitorAbstract
-        {
-            public ?PhpNode\Stmt\ClassMethod $found = null;
-
-            public function __construct(private string $target) {}
-
-            public function enterNode(PhpNode $node): ?int
-            {
-                if ($node instanceof PhpNode\Stmt\ClassMethod
-                    && $node->name->toString() === $this->target) {
-                    $this->found = $node;
-
-                    return NodeVisitor::STOP_TRAVERSAL;
-                }
-
-                return null;
-            }
-        };
-        $traverser->addVisitor($finder);
-        $traverser->traverse($parsed['ast']);
-
-        if ($finder->found === null) {
-            return [];
-        }
-
-        return $this->flowExtractor->extract($finder->found, $parsed['useMap'] ?? []);
+        return $this->flowExtractor->extract($found['methodNode'], $found['useMap']);
     }
 
     /**
@@ -230,9 +200,32 @@ class GraphBuilder
      */
     private function extractMethodMetrics(string $fqcn, string $method): array
     {
+        $found = $this->findMethodNodeInChain($fqcn, $method);
+        if ($found === null) {
+            return [];
+        }
+
+        return $this->flowExtractor->metrics($found['methodNode']);
+    }
+
+    /**
+     * Locate a method's AST node by walking the class inheritance chain.
+     * When the method is not defined on $fqcn itself, the search continues
+     * into the parent class, up to a depth of five hops.
+     *
+     * Returns null when the method cannot be found anywhere in the chain.
+     *
+     * @return array{methodNode: PhpNode\Stmt\ClassMethod, useMap: array<string,string>, file: string, declaringFqcn: string}|null
+     */
+    private function findMethodNodeInChain(string $fqcn, string $method, int $depth = 0): ?array
+    {
+        if ($depth > 5) {
+            return null;
+        }
+
         $file = $this->resolveFile($fqcn);
         if ($file === '') {
-            return [];
+            return null;
         }
 
         if (! isset($this->parseCache[$file])) {
@@ -240,7 +233,7 @@ class GraphBuilder
         }
         $parsed = $this->parseCache[$file];
         if (! $parsed || ! $parsed['ast']) {
-            return [];
+            return null;
         }
 
         $traverser = new NodeTraverser;
@@ -265,11 +258,49 @@ class GraphBuilder
         $traverser->addVisitor($finder);
         $traverser->traverse($parsed['ast']);
 
-        if ($finder->found === null) {
-            return [];
+        if ($finder->found !== null) {
+            return [
+                'methodNode' => $finder->found,
+                'useMap' => $parsed['useMap'] ?? [],
+                'file' => $file,
+                'declaringFqcn' => $fqcn,
+            ];
         }
 
-        return $this->flowExtractor->metrics($finder->found);
+        // Method not in this class — walk up to the parent if it is an app class.
+        $ns = PhpExtendsFqcnResolver::namespaceFromAst($parsed['ast']);
+        $parentFqcn = $this->extractExtendsFromAst($parsed['ast'], $ns, $parsed['useMap'] ?? []);
+        if (
+            $parentFqcn !== null
+            && ! str_starts_with($parentFqcn, 'Illuminate\\')
+            && ! str_starts_with($parentFqcn, 'Laravel\\')
+        ) {
+            return $this->findMethodNodeInChain($parentFqcn, $method, $depth + 1);
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract the fully-qualified parent class name from a parsed file's AST.
+     * Returns null when the class has no extends clause or it cannot be resolved.
+     *
+     * @param  PhpNode[]  $ast
+     * @param  array<string, string>  $useMap
+     */
+    private function extractExtendsFromAst(array $ast, string $ns, array $useMap): ?string
+    {
+        $stmts = $ast;
+        if (isset($stmts[0]) && $stmts[0] instanceof PhpNode\Stmt\Namespace_) {
+            $stmts = $stmts[0]->stmts;
+        }
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof PhpNode\Stmt\Class_ && $stmt->extends !== null) {
+                return PhpExtendsFqcnResolver::resolveExtends($stmt->extends, $ns, $useMap);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -289,6 +320,7 @@ class GraphBuilder
         string $projectRoot = '',
         array $dbQueryMap = [],
         ?ContainerBindingRegistry $bindingRegistry = null,
+        ?FacadeRegistry $facadeRegistry = null,
     ): Graph {
         if ($projectRoot !== '') {
             $this->psr4Map = $this->buildFullPsr4Map($projectRoot);
@@ -298,6 +330,7 @@ class GraphBuilder
         $this->seenControllerExtendsEdges = [];
         $this->seenBindingWires = [];
         $this->bindingRegistry = $bindingRegistry;
+        $this->facadeRegistry = $facadeRegistry;
         $this->dbQueryMap = $dbQueryMap;
         $this->graph->setMeta([
             'project' => $projectName,
@@ -397,6 +430,7 @@ class GraphBuilder
 
             $this->addEdge($callerNode, $calleeNode, $edgeLabel, $edgeType);
             $this->maybeWireContainerBinding($edge, $models);
+            $this->maybeWireFacadeResolution($edge, $models);
         }
 
         $this->supplementEnumAndInterfaceNodes($controllers, $callChain);
@@ -455,7 +489,7 @@ class GraphBuilder
         $id = match ($type) {
             'enum' => $this->enumNodeId($fqcn),
             'view' => $this->viewNodeId($fqcn),
-            'interface' => $this->interfaceNodeId($fqcn),
+            'interface' => $method !== '' ? $this->nodeIdForHop($fqcn, $method) : $this->interfaceNodeId($fqcn),
             'trait' => $this->traitNodeId($fqcn),
             default => $this->nodeIdForHop($fqcn, $method),
         };
@@ -631,6 +665,32 @@ class GraphBuilder
                 $this->addHopServiceClassNode($id, $fqcn, $method, 'validation_request', 'validation_request');
                 break;
 
+            case 'facade':
+                $short = class_basename($fqcn);
+                $file = $this->resolveFile($fqcn);
+                $members = ($file !== '' && is_file($file))
+                    ? $this->getStructureInspector()->listClassMethods($file)
+                    : [];
+                $facadeRecord = $this->facadeRegistry !== null ? $this->facadeRegistry->get($fqcn) : null;
+                $methodLocation = $this->findMethodNodeInChain($fqcn, $method);
+                $flowSteps = $methodLocation !== null
+                    ? $this->flowExtractor->extract($methodLocation['methodNode'], $methodLocation['useMap'])
+                    : [];
+                $this->graph->addNode(new Node($id, 'facade', "{$short}@{$method}", [
+                    'fqcn' => $fqcn,
+                    'method' => $method,
+                    'file' => $file,
+                    'members' => $members,
+                    'flowSteps' => $flowSteps,
+                    'accessor' => $facadeRecord !== null ? $facadeRecord->accessor : '',
+                    'concreteFqcn' => $facadeRecord !== null ? $facadeRecord->concreteFqcn : null,
+                    ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
+                ]));
+                if ($methodLocation !== null && $methodLocation['declaringFqcn'] !== $fqcn) {
+                    $this->wireInheritedMethodDelegation($id, $methodLocation, $method);
+                }
+                break;
+
             default: // service
                 $this->addHopServiceClassNode($id, $fqcn, $method, 'service', 'service');
                 break;
@@ -652,7 +712,10 @@ class GraphBuilder
     ): void {
         $short = class_basename($fqcn);
         $file = $this->resolveFile($fqcn);
-        $flowSteps = $this->extractMethodFlowSteps($fqcn, $method);
+        $methodLocation = $this->findMethodNodeInChain($fqcn, $method);
+        $flowSteps = $methodLocation !== null
+            ? $this->flowExtractor->extract($methodLocation['methodNode'], $methodLocation['useMap'])
+            : [];
         $svcMetrics = $this->extractMethodMetrics($fqcn, $method);
         $validationRules = $this->validationRulesForFile($file);
         $this->graph->addNode(new Node($id, $graphNodeType, "{$short}@{$method}", [
@@ -667,6 +730,9 @@ class GraphBuilder
             ...($this->isFatMethod($svcMetrics) ? ['fatMethod' => true] : []),
             ...(empty($validationRules) ? [] : ['validationRules' => $validationRules]),
         ]));
+        if ($methodLocation !== null && $methodLocation['declaringFqcn'] !== $fqcn) {
+            $this->wireInheritedMethodDelegation($id, $methodLocation, $method);
+        }
     }
 
     /**
@@ -742,6 +808,10 @@ class GraphBuilder
             return $traceType;
         }
 
+        if ($this->facadeRegistry !== null && $this->facadeRegistry->get($fqcn) !== null) {
+            return 'facade';
+        }
+
         $file = $this->resolveFile($fqcn);
         if ($file !== '' && is_file($file) && $this->getValidationRulesExtractor()->hasNonAbstractRulesMethod($file)) {
             return 'validation_request';
@@ -765,6 +835,7 @@ class GraphBuilder
             'interface' => 'uses',
             'trait' => 'uses',
             'abstract_class' => 'calls',
+            'facade' => 'calls',
             default => 'calls',
         };
     }
@@ -822,7 +893,7 @@ class GraphBuilder
         return match ($edge->type) {
             'enum' => $this->enumNodeId($edge->calleeFqcn),
             'view' => $this->viewNodeId($edge->calleeFqcn),
-            'interface' => $this->interfaceNodeId($edge->calleeFqcn),
+            'interface' => $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod),
             'trait' => $this->traitNodeId($edge->calleeFqcn),
             default => $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod),
         };
@@ -887,6 +958,88 @@ class GraphBuilder
             $to,
             '→ '.$short.'::'.$edge->calleeMethod,
             'binding-resolution',
+        );
+    }
+
+    private function maybeWireFacadeResolution(CallChainEdge $edge, array $models): void
+    {
+        if ($this->facadeRegistry === null) {
+            return;
+        }
+
+        $record = $this->facadeRegistry->get($edge->calleeFqcn);
+        if ($record === null) {
+            return;
+        }
+
+        $concrete = $record->concreteFqcn;
+        if ($concrete === null) {
+            return;
+        }
+
+        $from = $this->hopCalleeNodeId($edge);
+        if (! $this->graph->hasNode($from)) {
+            return;
+        }
+
+        $concreteClassified = $this->classifyFqcn($concrete);
+        $concreteType = $this->effectiveCalleeGraphType($concrete, $concreteClassified);
+        $this->ensureNode($concrete, $edge->calleeMethod, $concreteType, $models);
+        $to = $this->nodeIdForHop($concrete, $edge->calleeMethod);
+
+        $key = $from.'|facade-resolves-to|'.$to;
+        if (isset($this->seenBindingWires[$key])) {
+            return;
+        }
+        $this->seenBindingWires[$key] = true;
+
+        $short = class_basename($concrete);
+        $this->addEdge(
+            $from,
+            $to,
+            '→ '.$short.'::'.$edge->calleeMethod,
+            'facade-resolves-to',
+        );
+    }
+
+    /**
+     * When a method is inherited from a parent class, create a node for the
+     * declaring class and wire an "inherits-method" edge.
+     *
+     * @param  array{methodNode: mixed, useMap: array<string,string>, file: string, declaringFqcn: string}  $methodLocation
+     */
+    private function wireInheritedMethodDelegation(string $childNodeId, array $methodLocation, string $method): void
+    {
+        $declaringFqcn = $methodLocation['declaringFqcn'];
+        $parentNodeId = $this->nodeIdForHop($declaringFqcn, $method);
+
+        $key = $childNodeId.'|inherits-method|'.$parentNodeId;
+        if (isset($this->seenBindingWires[$key])) {
+            return;
+        }
+        $this->seenBindingWires[$key] = true;
+
+        if (! $this->graph->hasNode($parentNodeId)) {
+            $short = class_basename($declaringFqcn);
+            $flowSteps = $this->flowExtractor->extract($methodLocation['methodNode'], $methodLocation['useMap']);
+            $classified = $this->classifyFqcn($declaringFqcn);
+            $parentType = $this->effectiveCalleeGraphType($declaringFqcn, $classified);
+            $this->graph->addNode(new Node($parentNodeId, $parentType, "{$short}@{$method}", [
+                'fqcn' => $declaringFqcn,
+                'method' => $method,
+                'file' => $methodLocation['file'],
+                'members' => [],
+                'flowSteps' => $flowSteps,
+                ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
+            ]));
+        }
+
+        $short = class_basename($declaringFqcn);
+        $this->addEdge(
+            $childNodeId,
+            $parentNodeId,
+            '→ '.$short.'::'.$method,
+            'inherits-method',
         );
     }
 
@@ -1004,9 +1157,12 @@ class GraphBuilder
                 continue;
             }
             $kind = $info['kind'];
+            // Interface nodes are created per-method in ensureNode; skip class-level stubs here.
+            if ($kind === 'interface') {
+                continue;
+            }
             $nid = match ($kind) {
                 'enum' => $this->enumNodeId($fqcn),
-                'interface' => $this->interfaceNodeId($fqcn),
                 'trait' => $this->traitNodeId($fqcn),
                 default => $this->abstractClassDeclarationNodeId($fqcn),
             };
