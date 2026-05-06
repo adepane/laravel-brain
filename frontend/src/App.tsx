@@ -5,7 +5,6 @@ import { useTabGraph } from './hooks/useTabGraph'
 import { useVirtualGraph } from './hooks/useVirtualGraph'
 import { useTheme } from './hooks/useTheme'
 import { GraphView } from './components/GraphView'
-import { LARGE_GRAPH_THRESHOLD } from './utils/graphConstants'
 import { Sidebar } from './components/Sidebar'
 import { Toolbar } from './components/Toolbar'
 import { LeftSidebar } from './components/LeftSidebar'
@@ -32,7 +31,7 @@ export default function App() {
   const [layout, setLayout] = useState('dagre')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES))
+  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(['route', 'controller', 'action', 'view', 'validation_request']))
   const [rankDir, setRankDir] = useState<'LR' | 'TB'>('TB')
   const [stressTestNodeId, setStressTestNodeId] = useState<string | null>(null)
   const [stressRunKey, setStressRunKey] = useState(0)
@@ -72,13 +71,8 @@ export default function App() {
   if (tabState.data !== prevTabData) {
     setPrevTabData(tabState.data)
     if (tabState.data) {
-      const nodeCount = tabState.data.nodes.length
-      const nextVisible = new Set(
-        nodeCount > LARGE_GRAPH_THRESHOLD
-          ? ALL_TYPES.filter((t) => t !== 'middleware')
-          : ALL_TYPES
-      )
-      setVisibleTypes(nextVisible)
+      const defaultVisible = new Set(['route', 'controller', 'action', 'view', 'validation_request'] as GraphNode['type'][])
+      setVisibleTypes(defaultVisible)
     }
     setSelectedId(null)
   }

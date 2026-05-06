@@ -353,26 +353,26 @@ export function GraphView({
     [nodeById, isTypeVisible],
   )
 
-  /** Nodes hidden because every path to them passes through a collapsed node (recursive). */
+  /** Nodes hidden because they are reachable from a collapsed node (recursive BFS). */
   const hiddenNodeIds = useMemo(() => {
-    const parentMap = new Map<string, string[]>()
-    for (const n of nodes) parentMap.set(n.id, [])
+    const childrenMap = new Map<string, string[]>()
+    for (const n of nodes) childrenMap.set(n.id, [])
     for (const e of edges) {
       if (!edgeVisible(e)) continue
-      parentMap.get(e.target)?.push(e.source)
+      childrenMap.get(e.source)?.push(e.target)
     }
     const hidden = new Set<string>()
-    // Propagate: a node is hidden when every parent is collapsed or already hidden.
-    // Repeat until the set stops growing (handles arbitrary depth).
-    let changed = true
-    while (changed) {
-      changed = false
-      for (const n of nodes) {
-        if (hidden.has(n.id)) continue
-        const parents = parentMap.get(n.id) ?? []
-        if (parents.length > 0 && parents.every((p) => collapsedNodes.has(p) || hidden.has(p))) {
-          hidden.add(n.id)
-          changed = true
+    for (const collapsedId of collapsedNodes) {
+      const queue = [collapsedId]
+      const visited = new Set<string>([collapsedId])
+      while (queue.length) {
+        const id = queue.shift()!
+        for (const child of childrenMap.get(id) ?? []) {
+          if (!visited.has(child)) {
+            visited.add(child)
+            hidden.add(child)
+            queue.push(child)
+          }
         }
       }
     }

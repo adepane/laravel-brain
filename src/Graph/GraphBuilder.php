@@ -1226,7 +1226,9 @@ class GraphBuilder
                 continue;
             }
 
-            $targetMethod = 'rules';
+            // Always wire to the `validated` node so duplicate `rules` nodes are not created.
+            // `ensureNode` is a no-op when the node was already created by flow tracing.
+            $targetMethod = 'validated';
             $targetId = $this->nodeIdForHop($fqcn, $targetMethod);
             if ($this->hasDirectedEdge($actionId, $targetId)) {
                 continue;

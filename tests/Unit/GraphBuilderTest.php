@@ -81,7 +81,7 @@ it('exposes parent controller nodes and extends edges for inherited actions', fu
     expect($handlesFromParent)->not->toBeEmpty();
 });
 
-it('wires form request rules nodes and exposes validationRules on graph nodes', function () use ($fixtureProject) {
+it('wires form request validated nodes and exposes validationRules on graph nodes', function () use ($fixtureProject) {
     $routes = (new RouteAnalyzer)->analyze($fixtureProject);
     $middlewareRegistry = new MiddlewareRegistry([], [], []);
     $analyzer = new ControllerAnalyzer;
@@ -97,7 +97,7 @@ it('wires form request rules nodes and exposes validationRules on graph nodes', 
     $formRequestNodes = array_values(array_filter(
         $graph->nodes(),
         fn ($n) => ($n->data['fqcn'] ?? '') === 'App\\Http\\Requests\\ProfileStoreRequest'
-            && ($n->data['method'] ?? '') === 'rules'
+            && ($n->data['method'] ?? '') === 'validated'
     ));
     expect($formRequestNodes)->not->toBeEmpty();
     expect($formRequestNodes[0]->type)->toBe('validation_request');
