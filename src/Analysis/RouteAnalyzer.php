@@ -102,6 +102,14 @@ class RouteAnalyzer
 
             private const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'options', 'any'];
 
+            /**
+             * Methods that Laravel allows chaining AFTER a route definition:
+             * Route::get(...)->middleware(...)->name(...)->where(...)
+             * When the analyzer encounters one of these as the outermost call it must
+             * walk down to find the HTTP method and collect middleware/name from the chain.
+             */
+            private const POST_ROUTE_CHAIN_METHODS = ['middleware', 'withoutMiddleware', 'name', 'where', 'defaults', 'scopeBindings', 'withTrashed', 'missing', 'can'];
+
             public function __construct(array $useMap, string $file)
             {
                 $this->useMap = $useMap;
@@ -135,6 +143,7 @@ class RouteAnalyzer
 
                 // MethodCall: Route::middleware([...])->group(), Route::prefix('x')->group(), Route::namespace('x')->group()
                 // OR: Route::middleware([...])->get('/test', ...)
+                // OR: Route::get('/test', ...)->middleware('ability:...') — post-route chain
                 if ($node instanceof Node\Expr\MethodCall) {
                     $methodName = $node->name instanceof Node\Identifier ? $node->name->toString() : null;
                     if ($methodName === 'group') {
@@ -143,6 +152,12 @@ class RouteAnalyzer
                         $this->handleHttpRoute($node, $methodName);
                     } elseif (in_array($methodName, ['resource', 'apiResource'], true)) {
                         $this->handleResource($node, $methodName);
+                    } elseif (in_array($methodName, self::POST_ROUTE_CHAIN_METHODS, true)) {
+                        // Pattern: Route::get(...)->middleware('ability:...') or ->name('...')->middleware('...')
+                        // The HTTP route call is below in the AST; collect post-chain middleware and handle it.
+                        if ($this->tryHandlePostChainedRoute($node)) {
+                            return NodeTraverser::DONT_TRAVERSE_CHILDREN;
+                        }
                     }
                 }
 
@@ -171,7 +186,11 @@ class RouteAnalyzer
                 return null;
             }
 
-            private function handleHttpRoute(Node\Expr\StaticCall|Node\Expr\MethodCall $node, string $method): void
+            /**
+             * @param  string[]  $extraMiddlewares  Middleware collected from post-route chaining
+             *                                      (e.g. Route::get(...)->middleware('ability:...'))
+             */
+            private function handleHttpRoute(Node\Expr\StaticCall|Node\Expr\MethodCall $node, string $method, array $extraMiddlewares = []): void
             {
                 $uri = $this->extractString($node->args[0] ?? null);
                 if ($uri === null) {
@@ -203,7 +222,8 @@ class RouteAnalyzer
 
                 $middlewares = array_merge(
                     array_merge(...$this->middlewareStack ?: [[]]),
-                    $chainMiddlewares
+                    $chainMiddlewares,
+                    $extraMiddlewares
                 );
 
                 $this->routes[] = new RouteDefinition(
@@ -218,6 +238,57 @@ class RouteAnalyzer
                     tabGroup: strtoupper($method).' '.$fullUri,
                     closureNode: $closureNode,
                 );
+            }
+
+            /**
+             * Handles routes written as Route::get(...)->middleware('ability:...') where
+             * the HTTP method call is the var of one or more post-route chain calls.
+             *
+             * Walks down through the MethodCall chain collecting middleware, name, etc.
+             * until it finds the base HTTP route call (StaticCall or MethodCall), then
+             * registers the route with all collected post-chain middleware merged in.
+             *
+             * Returns true when a route was registered (caller should skip children).
+             */
+            private function tryHandlePostChainedRoute(Node\Expr\MethodCall $outerNode): bool
+            {
+                $postMiddlewares = [];
+                $current = $outerNode;
+
+                // Walk DOWN through post-route chain methods collecting middleware
+                while ($current instanceof Node\Expr\MethodCall) {
+                    $name = $current->name instanceof Node\Identifier ? $current->name->toString() : null;
+
+                    if ($name === 'middleware' && ! empty($current->args)) {
+                        $postMiddlewares = array_merge(
+                            $postMiddlewares,
+                            $this->extractMiddlewareList($current->args[0]->value)
+                        );
+                    }
+
+                    // If we've reached the HTTP method call (e.g. ->get(), ->post()) stop here
+                    if ($name !== null && in_array($name, self::HTTP_METHODS, true)) {
+                        $this->handleHttpRoute($current, $name, $postMiddlewares);
+
+                        return true;
+                    }
+
+                    $current = $current->var;
+                }
+
+                // Base of the chain is a StaticCall — Route::get('/brands', [...])
+                if ($current instanceof Node\Expr\StaticCall) {
+                    $class = $this->resolveClass($current->class);
+                    $name = $current->name instanceof Node\Identifier ? $current->name->toString() : null;
+
+                    if ($class === 'Route' && $name !== null && in_array($name, self::HTTP_METHODS, true)) {
+                        $this->handleHttpRoute($current, $name, $postMiddlewares);
+
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             private function handleResource(Node\Expr\StaticCall|Node\Expr\MethodCall $node, string $type): void

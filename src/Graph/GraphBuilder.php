@@ -7,6 +7,8 @@ namespace LaraMint\LaravelBrain\Graph;
 use LaraMint\LaravelBrain\Analysis\CallChainEdge;
 use LaraMint\LaravelBrain\Analysis\ChannelDefinition;
 use LaraMint\LaravelBrain\Analysis\ConsoleCommandDefinition;
+use LaraMint\LaravelBrain\Analysis\ContainerBindingRecord;
+use LaraMint\LaravelBrain\Analysis\ContainerBindingRegistry;
 use LaraMint\LaravelBrain\Analysis\ControllerDefinition;
 use LaraMint\LaravelBrain\Analysis\DbQuery;
 use LaraMint\LaravelBrain\Analysis\FilamentPageDefinition;
@@ -15,10 +17,13 @@ use LaraMint\LaravelBrain\Analysis\FilamentRelationManagerDefinition;
 use LaraMint\LaravelBrain\Analysis\FilamentResourceDefinition;
 use LaraMint\LaravelBrain\Analysis\FilamentWidgetDefinition;
 use LaraMint\LaravelBrain\Analysis\FlowExtractor;
+use LaraMint\LaravelBrain\Analysis\MethodTracer;
 use LaraMint\LaravelBrain\Analysis\MiddlewareRegistry;
 use LaraMint\LaravelBrain\Analysis\ModelDefinition;
+use LaraMint\LaravelBrain\Analysis\PhpStructureInspector;
 use LaraMint\LaravelBrain\Analysis\RouteDefinition;
 use LaraMint\LaravelBrain\Analysis\ScheduleEntry;
+use LaraMint\LaravelBrain\Analysis\ValidationRulesExtractor;
 use LaraMint\LaravelBrain\Parser\PhpFileParser;
 use PhpParser\Node as PhpNode;
 use PhpParser\NodeTraverser;
@@ -48,8 +53,31 @@ class GraphBuilder
      */
     private array $classMetrics = [];
 
+    /**
+     * @var array<string, true> dedupe keys "source|target" for controller-extends edges
+     */
+    private array $seenControllerExtendsEdges = [];
+
     /** @var array<string, DbQuery[]> "FQCN::method" => DbQuery[] */
     private array $dbQueryMap = [];
+
+    private string $projectRoot = '';
+
+    private ?PhpStructureInspector $structureInspector = null;
+
+    /** @var array<string, 'enum'|'interface'|'trait'|'abstract_class'|null> */
+    private array $surfaceKindCache = [];
+
+    private ?ContainerBindingRegistry $bindingRegistry = null;
+
+    private ?ValidationRulesExtractor $validationRulesExtractor = null;
+
+    /**
+     * Dedupe keys for container binding edges (source|kind|target tail).
+     *
+     * @var array<string, true>
+     */
+    private array $seenBindingWires = [];
 
     public function __construct()
     {
@@ -96,6 +124,52 @@ class GraphBuilder
                 $path = $basePath.'/'.str_replace('\\', '/', $relative).'.php';
                 if (file_exists($path)) {
                     return $path;
+                }
+            }
+        }
+
+        if ($this->projectRoot !== '') {
+            $relative = str_replace('\\', '/', $fqcn).'.php';
+            foreach (['app/Http/Controllers/', 'app/', 'src/'] as $prefix) {
+                $path = $this->projectRoot.'/'.$prefix.$relative;
+                if (file_exists($path)) {
+                    return $path;
+                }
+            }
+
+            $found = $this->searchProjectForClassFile($fqcn);
+            if ($found !== '') {
+                return $found;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Last-resort lookup when Composer's PSR-4 map is unavailable (e.g. fixture trees without vendor/).
+     */
+    private function searchProjectForClassFile(string $fqcn): string
+    {
+        $shortName = str_contains($fqcn, '\\')
+            ? substr($fqcn, strrpos($fqcn, '\\') + 1)
+            : $fqcn;
+
+        $filename = $shortName.'.php';
+
+        foreach (['app', 'src'] as $dir) {
+            $base = $this->projectRoot.'/'.$dir;
+            if (! is_dir($base)) {
+                continue;
+            }
+
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS)
+            );
+
+            foreach ($iterator as $file) {
+                if ($file->getFilename() === $filename) {
+                    return $file->getPathname();
                 }
             }
         }
@@ -214,11 +288,16 @@ class GraphBuilder
         array $models,
         string $projectRoot = '',
         array $dbQueryMap = [],
+        ?ContainerBindingRegistry $bindingRegistry = null,
     ): Graph {
         if ($projectRoot !== '') {
             $this->psr4Map = $this->buildFullPsr4Map($projectRoot);
         }
+        $this->projectRoot = $projectRoot;
         $this->classMetrics = [];
+        $this->seenControllerExtendsEdges = [];
+        $this->seenBindingWires = [];
+        $this->bindingRegistry = $bindingRegistry;
         $this->dbQueryMap = $dbQueryMap;
         $this->graph->setMeta([
             'project' => $projectName,
@@ -233,23 +312,57 @@ class GraphBuilder
 
             if ($route->controller !== 'Closure' && $route->controller !== '') {
                 $controllerId = $this->controllerId($route->controller);
-                $this->addControllerNode($route->controller, $controllers[$route->controller] ?? null, $controllerId);
+                $routeControllerDef = $controllers[$route->controller] ?? null;
+                $this->addControllerNode($route->controller, $routeControllerDef, $controllerId);
                 $this->addEdge($routeId, $controllerId, 'calls', 'route-to-controller');
+                $this->wireControllerAncestorEdges($route->controller, $routeControllerDef, $controllers);
 
                 if ($route->action) {
                     $actionId = $this->actionId($route->controller, $route->action);
-                    $controllerDef = $controllers[$route->controller] ?? null;
-                    $this->addActionNode($route->controller, $route->action, $controllerDef, $actionId);
-                    $this->addEdge($controllerId, $actionId, 'handles', 'controller-to-action');
+                    $this->addActionNode($route->controller, $route->action, $routeControllerDef, $actionId);
+
+                    $declaringFqcn = $this->declaringFqcnForAction($routeControllerDef, $route->action)
+                        ?? $route->controller;
+                    $handlersId = $this->controllerId($declaringFqcn);
+                    if ($declaringFqcn !== $route->controller) {
+                        $this->addControllerNode($declaringFqcn, $controllers[$declaringFqcn] ?? null, $handlersId);
+                    }
+                    $this->addEdge($handlersId, $actionId, 'handles', 'controller-to-action');
+
+                    if ($projectRoot !== '') {
+                        $this->wireActionFormRequests(
+                            $route->action,
+                            $actionId,
+                            $routeControllerDef,
+                            $models,
+                        );
+                    }
                 }
             }
 
-            // Middleware
+            // Route-level middleware (from route file)
             $resolvedMiddlewares = $this->resolveMiddlewares($route->middlewares, $middlewareRegistry);
             foreach ($resolvedMiddlewares as $mw) {
                 $mwId = $this->middlewareId($mw);
                 $this->addMiddlewareNode($mw, $mwId);
                 $this->addEdge($routeId, $mwId, 'guarded by', 'route-to-middleware');
+            }
+
+            // Controller-level middleware (HasMiddleware or $this->middleware() in __construct)
+            // filtered by only/except against the route's action method
+            $controllerDef = $controllers[$route->controller] ?? null;
+            if ($controllerDef !== null && ! empty($controllerDef->middlewares)) {
+                foreach ($controllerDef->middlewares as $cm) {
+                    if (! $cm->appliesToAction($route->action)) {
+                        continue;
+                    }
+                    $resolved = $this->resolveMiddlewares([$cm->middleware], $middlewareRegistry);
+                    foreach ($resolved as $mw) {
+                        $mwId = $this->middlewareId($mw);
+                        $this->addMiddlewareNode($mw, $mwId);
+                        $this->addEdge($routeId, $mwId, 'guarded by', 'route-to-middleware');
+                    }
+                }
             }
         }
 
@@ -263,24 +376,31 @@ class GraphBuilder
 
         foreach ($callChain as $edge) {
             $callerNode = $this->nodeIdForHop($edge->callerFqcn, $edge->callerMethod);
-            $calleeNode = $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod);
+            $calleeNode = $this->hopCalleeNodeId($edge);
+
+            $calleeGraphType = $this->effectiveCalleeGraphType($edge->calleeFqcn, $edge->type);
 
             // Ensure callee node exists
-            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $edge->type, $models);
+            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $calleeGraphType, $models);
 
             // Ensure caller node exists (may be a service/repo itself in deep chains)
             // The controller action node is already created in step 1; for others, create here.
             if (! $this->graph->hasNode($callerNode)) {
                 // Determine caller type by re-classifying
-                $callerType = $this->classifyFqcn($edge->callerFqcn);
-                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerType, $models);
+                $callerClassified = $this->classifyFqcn($edge->callerFqcn);
+                $callerGraphType = $this->effectiveCalleeGraphType($edge->callerFqcn, $callerClassified);
+                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerGraphType, $models);
             }
 
-            $edgeLabel = $this->edgeLabelForType($edge->type);
-            $edgeType = 'action-to-'.$edge->type;
+            $edgeLabel = $this->edgeLabelForType($calleeGraphType);
+            $edgeType = 'action-to-'.$calleeGraphType;
 
             $this->addEdge($callerNode, $calleeNode, $edgeLabel, $edgeType);
+            $this->maybeWireContainerBinding($edge, $models);
         }
+
+        $this->supplementEnumAndInterfaceNodes($controllers, $callChain);
+        $this->wireControllerInterfaceHints($routes, $controllers);
 
         // ── 3. Model-to-model relationships and model-fired events ───────────
 
@@ -332,12 +452,119 @@ class GraphBuilder
      */
     private function ensureNode(string $fqcn, string $method, string $type, array $models): void
     {
-        $id = $this->nodeIdForHop($fqcn, $method);
+        $id = match ($type) {
+            'enum' => $this->enumNodeId($fqcn),
+            'view' => $this->viewNodeId($fqcn),
+            'interface' => $this->interfaceNodeId($fqcn),
+            'trait' => $this->traitNodeId($fqcn),
+            default => $this->nodeIdForHop($fqcn, $method),
+        };
         if ($this->graph->hasNode($id)) {
             return;
         }
 
         switch ($type) {
+            case 'view':
+                $viewDot = str_starts_with($fqcn, MethodTracer::BLADE_FQCN_PREFIX)
+                    ? substr($fqcn, strlen(MethodTracer::BLADE_FQCN_PREFIX))
+                    : $fqcn;
+                $blade = $this->resolveBladePath($viewDot);
+                $refs = $blade !== null ? $this->parseBladeRefs($blade) : [];
+                $this->graph->addNode(new Node($id, 'view', $viewDot, [
+                    'view' => $viewDot,
+                    'file' => $blade ?? '',
+                    'members' => $refs,
+                ]));
+                break;
+
+            case 'enum':
+                $short = class_basename($fqcn);
+                $file = $this->resolveFile($fqcn);
+                $info = ($file !== '' && is_file($file))
+                    ? $this->getStructureInspector()->inspectFile($file)
+                    : null;
+                $members = $info['members'] ?? [];
+                $this->graph->addNode(new Node($id, 'enum', $short, [
+                    'fqcn' => $fqcn,
+                    'file' => $file,
+                    'members' => $members,
+                ]));
+                break;
+
+            case 'interface':
+                $short = class_basename($fqcn);
+                $file = $this->resolveFile($fqcn);
+                $info = ($file !== '' && is_file($file))
+                    ? $this->getStructureInspector()->inspectFile($file)
+                    : null;
+                $members = $info['members'] ?? [];
+                $this->graph->addNode(new Node($id, 'interface', $method !== '' ? "{$short}::{$method}" : $short, [
+                    'fqcn' => $fqcn,
+                    'method' => $method,
+                    'file' => $file,
+                    'members' => $members,
+                ]));
+                break;
+
+            case 'trait':
+                $short = class_basename($fqcn);
+                $file = $this->resolveFile($fqcn);
+                $info = ($file !== '' && is_file($file))
+                    ? $this->getStructureInspector()->inspectFile($file)
+                    : null;
+                $members = $info['members'] ?? [];
+                $this->graph->addNode(new Node($id, 'trait', $method !== '' ? "{$short}::{$method}" : $short, [
+                    'fqcn' => $fqcn,
+                    'method' => $method,
+                    'file' => $file,
+                    'members' => $members,
+                ]));
+                break;
+
+            case 'abstract_class':
+                $short = class_basename($fqcn);
+                $file = $this->resolveFile($fqcn);
+                $flowSteps = $this->extractMethodFlowSteps($fqcn, $method);
+                $absMetrics = $this->extractMethodMetrics($fqcn, $method);
+                $absInfo = ($file !== '' && is_file($file))
+                    ? $this->getStructureInspector()->inspectFile($file)
+                    : null;
+                $members = $absInfo['members'] ?? [];
+                $this->graph->addNode(new Node($id, 'abstract_class', "{$short}@{$method}", [
+                    'fqcn' => $fqcn,
+                    'method' => $method,
+                    'file' => $file,
+                    'flowSteps' => $flowSteps,
+                    'members' => $members,
+                    'visibility' => $this->extractVisibility($fqcn, $method),
+                    ...($absMetrics ? ['metrics' => $absMetrics] : []),
+                    ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
+                    ...($this->isFatMethod($absMetrics) ? ['fatMethod' => true] : []),
+                ]));
+                break;
+
+            case 'mail':
+            case 'notification':
+                $short = class_basename($fqcn);
+                $file = $this->resolveFile($fqcn);
+                $flowSteps = $method !== '' ? $this->extractMethodFlowSteps($fqcn, $method) : [];
+                $members = ($file !== '' && is_file($file))
+                    ? $this->getStructureInspector()->listClassMethods($file)
+                    : [];
+                $svcMetrics = $this->extractMethodMetrics($fqcn, $method);
+                $this->graph->addNode(new Node($id, $type, "{$short}@{$method}", [
+                    'fqcn' => $fqcn,
+                    'method' => $method,
+                    'file' => $file,
+                    'flowSteps' => $flowSteps,
+                    'members' => $members,
+                    'visibility' => $this->extractVisibility($fqcn, $method),
+                    ...($svcMetrics ? ['metrics' => $svcMetrics] : []),
+                    ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
+                    ...($this->isFatMethod($svcMetrics) ? ['fatMethod' => true] : []),
+                ]));
+                break;
+
             case 'model':
                 $short = class_basename($fqcn);
                 $file = isset($models[$fqcn]) ? $models[$fqcn]->file : $this->resolveFile($fqcn);
@@ -385,6 +612,7 @@ class GraphBuilder
                 $file = $this->resolveFile($fqcn);
                 $flowSteps = $this->extractMethodFlowSteps($fqcn, $method);
                 $repoMetrics = $this->extractMethodMetrics($fqcn, $method);
+                $validationRules = $this->validationRulesForFile($file);
                 $this->graph->addNode(new Node($id, 'service', "{$short}@{$method}", [
                     'fqcn' => $fqcn,
                     'method' => $method,
@@ -395,27 +623,50 @@ class GraphBuilder
                     ...($repoMetrics ? ['metrics' => $repoMetrics] : []),
                     ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
                     ...($this->isFatMethod($repoMetrics) ? ['fatMethod' => true] : []),
+                    ...(empty($validationRules) ? [] : ['validationRules' => $validationRules]),
                 ]));
                 break;
 
+            case 'validation_request':
+                $this->addHopServiceClassNode($id, $fqcn, $method, 'validation_request', 'validation_request');
+                break;
+
             default: // service
-                $short = class_basename($fqcn);
-                $file = $this->resolveFile($fqcn);
-                $flowSteps = $this->extractMethodFlowSteps($fqcn, $method);
-                $svcMetrics = $this->extractMethodMetrics($fqcn, $method);
-                $this->graph->addNode(new Node($id, 'service', "{$short}@{$method}", [
-                    'fqcn' => $fqcn,
-                    'method' => $method,
-                    'subtype' => 'service',
-                    'file' => $file,
-                    'flowSteps' => $flowSteps,
-                    'visibility' => $this->extractVisibility($fqcn, $method),
-                    ...($svcMetrics ? ['metrics' => $svcMetrics] : []),
-                    ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
-                    ...($this->isFatMethod($svcMetrics) ? ['fatMethod' => true] : []),
-                ]));
+                $this->addHopServiceClassNode($id, $fqcn, $method, 'service', 'service');
                 break;
         }
+    }
+
+    /**
+     * Service-like lifecycle hops (app services vs Form Request rule hosts).
+     *
+     * @param  'service'|'validation_request'  $graphNodeType
+     * @param  'service'|'validation_request'  $dataSubtype
+     */
+    private function addHopServiceClassNode(
+        string $id,
+        string $fqcn,
+        string $method,
+        string $graphNodeType,
+        string $dataSubtype,
+    ): void {
+        $short = class_basename($fqcn);
+        $file = $this->resolveFile($fqcn);
+        $flowSteps = $this->extractMethodFlowSteps($fqcn, $method);
+        $svcMetrics = $this->extractMethodMetrics($fqcn, $method);
+        $validationRules = $this->validationRulesForFile($file);
+        $this->graph->addNode(new Node($id, $graphNodeType, "{$short}@{$method}", [
+            'fqcn' => $fqcn,
+            'method' => $method,
+            'subtype' => $dataSubtype,
+            'file' => $file,
+            'flowSteps' => $flowSteps,
+            'visibility' => $this->extractVisibility($fqcn, $method),
+            ...($svcMetrics ? ['metrics' => $svcMetrics] : []),
+            ...($this->hasN1InSteps($flowSteps) ? ['hasN1' => true] : []),
+            ...($this->isFatMethod($svcMetrics) ? ['fatMethod' => true] : []),
+            ...(empty($validationRules) ? [] : ['validationRules' => $validationRules]),
+        ]));
     }
 
     /**
@@ -424,6 +675,10 @@ class GraphBuilder
      */
     private function nodeIdForHop(string $fqcn, string $method): string
     {
+        if (str_starts_with($fqcn, MethodTracer::BLADE_FQCN_PREFIX)) {
+            return $this->viewNodeId($fqcn);
+        }
+
         // Controller action nodes use the existing format
         if ($this->isController($fqcn)) {
             return $this->actionId($fqcn, $method);
@@ -443,6 +698,25 @@ class GraphBuilder
         if ($this->isController($fqcn)) {
             return 'action';
         }
+        $surface = $this->declarationSurfaceKind($fqcn);
+        if ($surface === 'interface') {
+            return 'interface';
+        }
+        if ($surface === 'enum') {
+            return 'enum';
+        }
+        if ($surface === 'trait') {
+            return 'trait';
+        }
+        if ($surface === 'abstract_class') {
+            return 'abstract_class';
+        }
+        if ($this->looksLikeMailFqcn($fqcn)) {
+            return 'mail';
+        }
+        if ($this->looksLikeNotificationFqcn($fqcn)) {
+            return 'notification';
+        }
         if (str_contains($fqcn, 'Repository') || str_contains($fqcn, '\\Repositories\\')) {
             return 'repository';
         }
@@ -459,6 +733,23 @@ class GraphBuilder
         return 'service';
     }
 
+    /**
+     * Map traced edge types to graph node types (e.g. Form Request classes → validation_request).
+     */
+    private function effectiveCalleeGraphType(string $fqcn, string $traceType): string
+    {
+        if ($traceType !== 'service') {
+            return $traceType;
+        }
+
+        $file = $this->resolveFile($fqcn);
+        if ($file !== '' && is_file($file) && $this->getValidationRulesExtractor()->hasNonAbstractRulesMethod($file)) {
+            return 'validation_request';
+        }
+
+        return 'service';
+    }
+
     private function edgeLabelForType(string $type): string
     {
         return match ($type) {
@@ -466,8 +757,429 @@ class GraphBuilder
             'job' => 'dispatches',
             'event' => 'dispatches',
             'repository' => 'calls',
+            'validation_request' => 'validates',
+            'view' => 'renders',
+            'mail' => 'sends',
+            'notification' => 'notifies',
+            'enum' => 'uses',
+            'interface' => 'uses',
+            'trait' => 'uses',
+            'abstract_class' => 'calls',
             default => 'calls',
         };
+    }
+
+    private function getStructureInspector(): PhpStructureInspector
+    {
+        return $this->structureInspector ??= new PhpStructureInspector($this->parser);
+    }
+
+    private function getValidationRulesExtractor(): ValidationRulesExtractor
+    {
+        return $this->validationRulesExtractor ??= new ValidationRulesExtractor($this->parser);
+    }
+
+    /**
+     * @return list<array{field: string, rules: string}>
+     */
+    private function validationRulesForFile(string $file): array
+    {
+        if ($file === '' || ! is_file($file)) {
+            return [];
+        }
+
+        return $this->getValidationRulesExtractor()->extractFromFile($file);
+    }
+
+    /**
+     * Enum, interface, trait, or abstract class as the primary declaration in the FQCN's file.
+     *
+     * @return 'enum'|'interface'|'trait'|'abstract_class'|null
+     */
+    private function declarationSurfaceKind(string $fqcn): ?string
+    {
+        if (array_key_exists($fqcn, $this->surfaceKindCache)) {
+            return $this->surfaceKindCache[$fqcn];
+        }
+        $file = $this->resolveFile($fqcn);
+        if ($file === '' || ! is_file($file)) {
+            return $this->surfaceKindCache[$fqcn] = null;
+        }
+        $info = $this->getStructureInspector()->inspectFile($file);
+        if ($info === null) {
+            return $this->surfaceKindCache[$fqcn] = null;
+        }
+        $k = $info['kind'];
+        if (! in_array($k, ['enum', 'interface', 'trait', 'abstract_class'], true)) {
+            return $this->surfaceKindCache[$fqcn] = null;
+        }
+
+        return $this->surfaceKindCache[$fqcn] = $k;
+    }
+
+    private function hopCalleeNodeId(CallChainEdge $edge): string
+    {
+        return match ($edge->type) {
+            'enum' => $this->enumNodeId($edge->calleeFqcn),
+            'view' => $this->viewNodeId($edge->calleeFqcn),
+            'interface' => $this->interfaceNodeId($edge->calleeFqcn),
+            'trait' => $this->traitNodeId($edge->calleeFqcn),
+            default => $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod),
+        };
+    }
+
+    private function maybeWireContainerBinding(CallChainEdge $edge, array $models): void
+    {
+        if ($this->bindingRegistry === null) {
+            return;
+        }
+
+        $abstract = $edge->calleeFqcn;
+        if ($abstract === '' || str_starts_with($abstract, MethodTracer::BLADE_FQCN_PREFIX)) {
+            return;
+        }
+
+        $surface = $this->declarationSurfaceKind($abstract);
+        $isAbstraction = $edge->type === 'interface'
+            || $edge->type === 'abstract_class'
+            || $surface === 'interface'
+            || $surface === 'abstract_class';
+
+        if (! $isAbstraction) {
+            return;
+        }
+
+        $record = $this->bindingRegistry->get($abstract);
+        if ($record === null) {
+            return;
+        }
+
+        $from = $this->hopCalleeNodeId($edge);
+        if (! $this->graph->hasNode($from)) {
+            return;
+        }
+
+        $provId = $this->ensureServiceProviderNode($record->providerFqcn);
+        $regKey = $from.'|in|'.$provId;
+        if (! isset($this->seenBindingWires[$regKey])) {
+            $this->seenBindingWires[$regKey] = true;
+            $label = $this->bindingRegistrationLabel($record);
+            $this->addEdge($from, $provId, $label, 'binding-registered-in');
+        }
+
+        $concrete = $record->concreteFqcn;
+        if ($concrete === null || $concrete === $abstract) {
+            return;
+        }
+
+        $concreteClassified = $this->classifyFqcn($concrete);
+        $concreteType = $this->effectiveCalleeGraphType($concrete, $concreteClassified);
+        $this->ensureNode($concrete, $edge->calleeMethod, $concreteType, $models);
+        $to = $this->nodeIdForHop($concrete, $edge->calleeMethod);
+        $resKey = $from.'|res|'.$to;
+        if (isset($this->seenBindingWires[$resKey])) {
+            return;
+        }
+        $this->seenBindingWires[$resKey] = true;
+        $short = class_basename($concrete);
+        $this->addEdge(
+            $from,
+            $to,
+            '→ '.$short.'::'.$edge->calleeMethod,
+            'binding-resolution',
+        );
+    }
+
+    private function ensureServiceProviderNode(string $providerFqcn): string
+    {
+        $id = $this->serviceProviderId($providerFqcn);
+        if ($this->graph->hasNode($id)) {
+            return $id;
+        }
+
+        $short = class_basename($providerFqcn);
+        $this->graph->addNode(new Node($id, 'service_provider', $short, [
+            'fqcn' => $providerFqcn,
+            'file' => $this->resolveFile($providerFqcn),
+        ]));
+
+        return $id;
+    }
+
+    private function serviceProviderId(string $fqcn): string
+    {
+        return 'service_provider::'.strtolower(preg_replace('/[^a-zA-Z0-9_]/', '_', $fqcn));
+    }
+
+    private function bindingRegistrationLabel(ContainerBindingRecord $record): string
+    {
+        $kind = match ($record->kind) {
+            'singleton', 'singletons' => 'Singleton',
+            'scoped' => 'Scoped',
+            default => 'Bind',
+        };
+        $prov = class_basename($record->providerFqcn);
+
+        return "{$kind} in {$prov}";
+    }
+
+    private function viewNodeId(string $bladeFqcn): string
+    {
+        $slug = strtolower(preg_replace('/[^a-zA-Z0-9._]/', '_', $bladeFqcn));
+
+        return 'view::'.$slug;
+    }
+
+    private function enumNodeId(string $fqcn): string
+    {
+        return 'enum::'.strtolower(preg_replace('/[^a-zA-Z0-9_]/', '_', $fqcn));
+    }
+
+    private function interfaceNodeId(string $fqcn): string
+    {
+        return 'interface::'.strtolower(preg_replace('/[^a-zA-Z0-9_]/', '_', $fqcn));
+    }
+
+    private function traitNodeId(string $fqcn): string
+    {
+        return 'trait::'.strtolower(preg_replace('/[^a-zA-Z0-9_]/', '_', $fqcn));
+    }
+
+    private function abstractClassDeclarationNodeId(string $fqcn): string
+    {
+        return 'abstract_class::'.strtolower(preg_replace('/[^a-zA-Z0-9_]/', '_', $fqcn));
+    }
+
+    private function looksLikeMailFqcn(string $fqcn): bool
+    {
+        return str_contains($fqcn, '\\Mail\\')
+            || str_contains($fqcn, '\\Mails\\')
+            || str_contains($fqcn, 'Mailable');
+    }
+
+    private function looksLikeNotificationFqcn(string $fqcn): bool
+    {
+        return str_contains($fqcn, '\\Notifications\\');
+    }
+
+    /**
+     * @param  array<string, ControllerDefinition>  $controllers
+     * @param  CallChainEdge[]  $callChain
+     */
+    private function supplementEnumAndInterfaceNodes(array $controllers, array $callChain): void
+    {
+        $seen = [];
+        foreach ($callChain as $e) {
+            foreach ([$e->callerFqcn, $e->calleeFqcn] as $fq) {
+                if ($fq === '' || str_starts_with($fq, MethodTracer::BLADE_FQCN_PREFIX)) {
+                    continue;
+                }
+                $seen[$fq] = true;
+            }
+        }
+        foreach ($controllers as $def) {
+            foreach ($def->constructorDeps as $short) {
+                $fq = $def->useMap[$short] ?? $short;
+                if (is_string($fq) && str_contains($fq, '\\')) {
+                    $seen[$fq] = true;
+                }
+            }
+            foreach ($def->methods as $m) {
+                foreach ($m->dependencies as $short) {
+                    $fq = $def->useMap[$short] ?? $short;
+                    if (is_string($fq) && str_contains($fq, '\\')) {
+                        $seen[$fq] = true;
+                    }
+                }
+            }
+        }
+
+        foreach (array_keys($seen) as $fqcn) {
+            $file = $this->resolveFile($fqcn);
+            if ($file === '' || ! is_file($file)) {
+                continue;
+            }
+            $info = $this->getStructureInspector()->inspectFile($file);
+            if ($info === null || ! in_array($info['kind'], ['enum', 'interface', 'trait', 'abstract_class'], true)) {
+                continue;
+            }
+            $kind = $info['kind'];
+            $nid = match ($kind) {
+                'enum' => $this->enumNodeId($fqcn),
+                'interface' => $this->interfaceNodeId($fqcn),
+                'trait' => $this->traitNodeId($fqcn),
+                default => $this->abstractClassDeclarationNodeId($fqcn),
+            };
+            if ($nid === '') {
+                continue;
+            }
+            if ($this->graph->hasNode($nid)) {
+                continue;
+            }
+            $this->graph->addNode(new Node($nid, $kind, class_basename($fqcn), [
+                'fqcn' => $fqcn,
+                'file' => $file,
+                'members' => $info['members'],
+            ]));
+        }
+    }
+
+    /**
+     * Link controller actions to Form Request (or similar) classes type-hinted on the action or constructor
+     * when they declare a concrete {@see rules()} method — mirrors container injection for validation.
+     *
+     * @param  array<string, ModelDefinition>  $models
+     */
+    private function wireActionFormRequests(
+        string $action,
+        string $actionId,
+        ?ControllerDefinition $def,
+        array $models,
+    ): void {
+        if ($def === null) {
+            return;
+        }
+
+        $methodDef = null;
+        foreach ($def->methods as $m) {
+            if ($m->name === $action) {
+                $methodDef = $m;
+                break;
+            }
+        }
+
+        $shortNames = array_merge(
+            array_values($def->constructorDeps),
+            $methodDef !== null ? array_values($methodDef->dependencies) : [],
+        );
+
+        foreach (array_unique($shortNames, SORT_STRING) as $short) {
+            $fqcn = $def->useMap[$short] ?? $short;
+            if (! is_string($fqcn) || ! str_contains($fqcn, '\\')) {
+                continue;
+            }
+            if ($this->isFrameworkDependencyFqcn($fqcn)) {
+                continue;
+            }
+
+            $file = $this->resolveFile($fqcn);
+            if ($file === '' || ! is_file($file)) {
+                continue;
+            }
+            if (! $this->getValidationRulesExtractor()->hasNonAbstractRulesMethod($file)) {
+                continue;
+            }
+
+            $targetMethod = 'rules';
+            $targetId = $this->nodeIdForHop($fqcn, $targetMethod);
+            if ($this->hasDirectedEdge($actionId, $targetId)) {
+                continue;
+            }
+
+            $this->ensureNode($fqcn, $targetMethod, 'validation_request', $models);
+            $this->addEdge($actionId, $targetId, 'validates', 'action-to-form-request');
+        }
+    }
+
+    private function hasDirectedEdge(string $source, string $target): bool
+    {
+        foreach ($this->graph->edges() as $edge) {
+            if ($edge->source === $source && $edge->target === $target) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isFrameworkDependencyFqcn(string $fqcn): bool
+    {
+        return str_starts_with($fqcn, 'Illuminate\\')
+            || str_starts_with($fqcn, 'Laravel\\')
+            || in_array($fqcn, ['Request', 'Response', 'Validator', 'Auth', 'DB', 'Cache', 'Log', 'Storage'], true);
+    }
+
+    private function wireControllerInterfaceHints(array $routes, array $controllers): void
+    {
+        foreach ($routes as $route) {
+            if ($route->controller === '' || $route->controller === 'Closure') {
+                continue;
+            }
+            $def = $controllers[$route->controller] ?? null;
+            if ($def === null) {
+                continue;
+            }
+            $cid = $this->controllerId($route->controller);
+            if (! $this->graph->hasNode($cid)) {
+                continue;
+            }
+            $hints = array_merge(
+                array_values($def->constructorDeps),
+                ...array_map(fn ($m) => array_values($m->dependencies), $def->methods)
+            );
+            foreach (array_unique($hints) as $short) {
+                $fq = $def->useMap[$short] ?? $short;
+                if (! is_string($fq) || ! str_contains($fq, '\\')) {
+                    continue;
+                }
+                $file = $this->resolveFile($fq);
+                if ($file === '' || ! is_file($file)) {
+                    continue;
+                }
+                $info = $this->getStructureInspector()->inspectFile($file);
+                if (($info['kind'] ?? '') !== 'interface') {
+                    continue;
+                }
+                $iid = $this->interfaceNodeId($fq);
+                if (! $this->graph->hasNode($iid)) {
+                    $this->graph->addNode(new Node($iid, 'interface', class_basename($fq), [
+                        'fqcn' => $fq,
+                        'file' => $file,
+                        'members' => $info['members'],
+                    ]));
+                }
+                $this->addEdge($cid, $iid, 'type-hint', 'controller-to-interface');
+            }
+        }
+    }
+
+    private function resolveBladePath(string $viewDot): ?string
+    {
+        $root = $this->projectRoot;
+        if ($root === '') {
+            return null;
+        }
+        $rel = str_replace('.', '/', $viewDot).'.blade.php';
+        $candidates = [
+            $root.'/resources/views/'.$rel,
+            $root.'/resources/views/vendor/'.$rel,
+        ];
+        foreach ($candidates as $path) {
+            if (is_file($path)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return list<array{kind: string, name: string}>
+     */
+    private function parseBladeRefs(string $bladePath): array
+    {
+        $content = @file_get_contents($bladePath);
+        if ($content === false || $content === '') {
+            return [];
+        }
+        $refs = [];
+        if (preg_match_all('/@(?:include|extends|component|includeIf|each)\s*\(\s*[\'"]([^\'"]+)[\'"]/', $content, $m)) {
+            foreach ($m[1] as $name) {
+                $refs[] = ['kind' => 'blade_ref', 'name' => $name];
+            }
+        }
+
+        return $refs;
     }
 
     // ── Existing node adders ──────────────────────────────────────────────────
@@ -505,10 +1217,88 @@ class GraphBuilder
             return;
         }
         $short = class_basename($fqcn);
-        $this->graph->addNode(new Node($id, 'controller', $short, [
+        $file = ($def !== null && $def->fqcn === $fqcn)
+            ? $def->file
+            : $this->resolveFile($fqcn);
+        if ($file === '') {
+            $file = $this->resolveFile($fqcn);
+        }
+        $data = [
             'fqcn' => $fqcn,
-            'file' => $def !== null ? $def->file : $this->resolveFile($fqcn),
-        ]));
+            'file' => $file,
+        ];
+
+        $members = [];
+        if ($def !== null && $def->fqcn === $fqcn) {
+            foreach ($def->methods as $m) {
+                if (str_starts_with($m->name, '__')) {
+                    continue;
+                }
+                $decl = $m->declaringFqcn ?? $def->fqcn;
+                $row = [
+                    'kind' => 'method',
+                    'name' => $m->name,
+                    'visibility' => $m->visibility,
+                ];
+                if ($m->ast !== null && $m->ast->isStatic()) {
+                    $row['static'] = true;
+                }
+                if ($decl !== $fqcn) {
+                    $row['declaringClass'] = class_basename($decl);
+                }
+                $members[] = $row;
+            }
+        } elseif ($file !== '' && is_file($file)) {
+            foreach ($this->getStructureInspector()->listClassMethods($file) as $row) {
+                $members[] = [
+                    'kind' => 'method',
+                    'name' => $row['name'],
+                    'visibility' => $row['visibility'],
+                    ...($row['static'] ? ['static' => true] : []),
+                ];
+            }
+        }
+        if ($members !== []) {
+            $data['members'] = $members;
+        }
+
+        $this->graph->addNode(new Node($id, 'controller', $short, $data));
+    }
+
+    /**
+     * @param  array<string, ControllerDefinition>  $controllers
+     */
+    private function wireControllerAncestorEdges(string $routeControllerFqcn, ?ControllerDefinition $def, array $controllers): void
+    {
+        if ($def === null || $def->ancestorFqcns === []) {
+            return;
+        }
+        $prev = $routeControllerFqcn;
+        foreach ($def->ancestorFqcns as $ancestorFqcn) {
+            $parentDef = $controllers[$ancestorFqcn] ?? null;
+            $parentId = $this->controllerId($ancestorFqcn);
+            $this->addControllerNode($ancestorFqcn, $parentDef, $parentId);
+            $sig = $this->controllerId($prev).'|'.$parentId;
+            if (! isset($this->seenControllerExtendsEdges[$sig])) {
+                $this->seenControllerExtendsEdges[$sig] = true;
+                $this->addEdge($this->controllerId($prev), $parentId, 'extends', 'controller-extends');
+            }
+            $prev = $ancestorFqcn;
+        }
+    }
+
+    private function declaringFqcnForAction(?ControllerDefinition $def, string $action): ?string
+    {
+        if ($def === null) {
+            return null;
+        }
+        foreach ($def->methods as $methodDef) {
+            if ($methodDef->name === $action && $methodDef->ast !== null) {
+                return $methodDef->declaringFqcn ?? $def->fqcn;
+            }
+        }
+
+        return null;
     }
 
     private function addActionNode(string $fqcn, string $action, ?ControllerDefinition $def, string $id): void
@@ -516,31 +1306,41 @@ class GraphBuilder
         if ($this->graph->hasNode($id)) {
             return;
         }
-        $short = class_basename($fqcn);
+
+        $declaringFqcn = $this->declaringFqcnForAction($def, $action) ?? $fqcn;
+        $declaringBasename = class_basename($declaringFqcn);
+        $routeBasename = class_basename($fqcn);
+        $label = $declaringBasename.'@'.$action;
+        if ($declaringFqcn !== $fqcn) {
+            $label .= ' ← '.$routeBasename;
+        }
 
         $flowSteps = [];
         $metrics = [];
         if ($def !== null) {
             foreach ($def->methods as $methodDef) {
                 if ($methodDef->name === $action && $methodDef->ast !== null) {
-                    $flowSteps = $this->flowExtractor->extract($methodDef->ast, $def->useMap);
+                    $um = $methodDef->methodUseMap ?? $def->useMap;
+                    $flowSteps = $this->flowExtractor->extract($methodDef->ast, $um);
                     $metrics = $this->flowExtractor->metrics($methodDef->ast);
                     break;
                 }
             }
         }
 
-        $controllerId = $this->controllerId($fqcn);
+        $metricsControllerId = $this->controllerId($declaringFqcn);
         if (! empty($metrics)) {
-            $this->classMetrics[$controllerId] ??= ['totalLines' => 0, 'methodCount' => 0];
-            $this->classMetrics[$controllerId]['totalLines'] += $metrics['lineCount'];
-            $this->classMetrics[$controllerId]['methodCount'] += 1;
+            $this->classMetrics[$metricsControllerId] ??= ['totalLines' => 0, 'methodCount' => 0];
+            $this->classMetrics[$metricsControllerId]['totalLines'] += $metrics['lineCount'];
+            $this->classMetrics[$metricsControllerId]['methodCount'] += 1;
         }
 
+        $declaringFile = $this->resolveFile($declaringFqcn);
         $nodeData = [
             'fqcn' => $fqcn,
+            'declaringFqcn' => $declaringFqcn,
             'method' => $action,
-            'file' => $def !== null ? $def->file : $this->resolveFile($fqcn),
+            'file' => $declaringFile !== '' ? $declaringFile : ($def !== null ? $def->file : $this->resolveFile($fqcn)),
             'flowSteps' => $flowSteps,
             'visibility' => $this->findActionVisibility($action, $def),
         ];
@@ -564,7 +1364,7 @@ class GraphBuilder
             );
         }
 
-        $this->graph->addNode(new Node($id, 'action', "{$short}@{$action}", $nodeData));
+        $this->graph->addNode(new Node($id, 'action', $label, $nodeData));
     }
 
     private function findActionVisibility(string $action, ?ControllerDefinition $def): string
@@ -668,10 +1468,15 @@ class GraphBuilder
         if ($this->graph->hasNode($id)) {
             return;
         }
-        $short = class_basename($fqcn);
+        // $fqcn may carry parameters, e.g. "CheckForAnyAbility:view-X,create-Y"
+        $parts = explode(':', $fqcn, 2);
+        $classPart = $parts[0];
+        $params = $parts[1] ?? null;
+        $short = class_basename($classPart);
         $this->graph->addNode(new Node($id, 'middleware', $short, [
-            'fqcn' => $fqcn,
-            'file' => $this->resolveFile($fqcn),
+            'fqcn' => $classPart,
+            'params' => $params,
+            'file' => $this->resolveFile($classPart),
         ]));
     }
 
@@ -706,8 +1511,13 @@ class GraphBuilder
     {
         $resolved = [];
         foreach ($middlewares as $mw) {
-            $alias = explode(':', $mw)[0];
-            $resolved[] = $registry->resolveAlias($alias);
+            // Split only on the first colon so params like 'ability:view-X,create-Y'
+            // or 'throttle:60,1' are preserved after the alias is resolved.
+            $parts = explode(':', $mw, 2);
+            $alias = $parts[0];
+            $params = $parts[1] ?? null;
+            $fqcn = $registry->resolveAlias($alias);
+            $resolved[] = $params !== null ? "{$fqcn}:{$params}" : $fqcn;
         }
 
         return array_unique($resolved);
@@ -771,16 +1581,18 @@ class GraphBuilder
         foreach ($callEdges as $edge) {
             $callerNode = $classToCmdId[$edge->callerFqcn]
                 ?? $this->nodeIdForHop($edge->callerFqcn, $edge->callerMethod);
-            $calleeNode = $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod);
+            $calleeNode = $this->hopCalleeNodeId($edge);
 
-            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $edge->type, []);
+            $calleeGraphType = $this->effectiveCalleeGraphType($edge->calleeFqcn, $edge->type);
+            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $calleeGraphType, []);
 
             if (! $this->graph->hasNode($callerNode) && ! isset($classToCmdId[$edge->callerFqcn])) {
-                $callerType = $this->classifyFqcn($edge->callerFqcn);
-                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerType, []);
+                $callerClassified = $this->classifyFqcn($edge->callerFqcn);
+                $callerGraphType = $this->effectiveCalleeGraphType($edge->callerFqcn, $callerClassified);
+                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerGraphType, []);
             }
 
-            $this->addEdge($callerNode, $calleeNode, $this->edgeLabelForType($edge->type), 'command-to-'.$edge->type);
+            $this->addEdge($callerNode, $calleeNode, $this->edgeLabelForType($calleeGraphType), 'command-to-'.$calleeGraphType);
         }
 
         foreach ($schedules as $entry) {
@@ -832,22 +1644,24 @@ class GraphBuilder
                     ?? $this->nodeIdForHop($edge->callerFqcn, $edge->callerMethod);
             }
 
-            $calleeNode = $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod);
+            $calleeNode = $this->hopCalleeNodeId($edge);
 
+            $calleeGraphType = $this->effectiveCalleeGraphType($edge->calleeFqcn, $edge->type);
             // Ensure callee node exists (model, service, job, event, etc.)
-            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $edge->type, []);
+            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $calleeGraphType, []);
 
             // For intermediate service/repo callers in deep chains
             if (! $this->graph->hasNode($callerNode) && ! isset($pageNodeIds[$edge->callerFqcn])) {
-                $callerType = $this->classifyFqcn($edge->callerFqcn);
-                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerType, []);
+                $callerClassified = $this->classifyFqcn($edge->callerFqcn);
+                $callerGraphType = $this->effectiveCalleeGraphType($edge->callerFqcn, $callerClassified);
+                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerGraphType, []);
             }
 
             $this->addEdge(
                 $callerNode,
                 $calleeNode,
-                $this->edgeLabelForType($edge->type),
-                'filament-page-to-'.$edge->type,
+                $this->edgeLabelForType($calleeGraphType),
+                'filament-page-to-'.$calleeGraphType,
             );
         }
     }
@@ -890,16 +1704,18 @@ class GraphBuilder
         foreach ($callEdges as $edge) {
             $callerNode = $classToChannelId[$edge->callerFqcn]
                 ?? $this->nodeIdForHop($edge->callerFqcn, $edge->callerMethod);
-            $calleeNode = $this->nodeIdForHop($edge->calleeFqcn, $edge->calleeMethod);
+            $calleeNode = $this->hopCalleeNodeId($edge);
 
-            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $edge->type, []);
+            $calleeGraphType = $this->effectiveCalleeGraphType($edge->calleeFqcn, $edge->type);
+            $this->ensureNode($edge->calleeFqcn, $edge->calleeMethod, $calleeGraphType, []);
 
             if (! $this->graph->hasNode($callerNode) && ! isset($classToChannelId[$edge->callerFqcn])) {
-                $callerType = $this->classifyFqcn($edge->callerFqcn);
-                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerType, []);
+                $callerClassified = $this->classifyFqcn($edge->callerFqcn);
+                $callerGraphType = $this->effectiveCalleeGraphType($edge->callerFqcn, $callerClassified);
+                $this->ensureNode($edge->callerFqcn, $edge->callerMethod, $callerGraphType, []);
             }
 
-            $this->addEdge($callerNode, $calleeNode, $this->edgeLabelForType($edge->type), 'channel-to-'.$edge->type);
+            $this->addEdge($callerNode, $calleeNode, $this->edgeLabelForType($calleeGraphType), 'channel-to-'.$calleeGraphType);
         }
     }
 

@@ -10,7 +10,7 @@ interface Props {
   selectedId: string | null
 }
 
-const COMPLEXITY_TYPES = new Set(['action', 'service', 'controller', 'job', 'command'])
+const COMPLEXITY_TYPES = new Set(['action', 'service', 'validation_request', 'controller', 'job', 'command'])
 
 export function ComplexityPanel({ graphData, filter, onFilterChange, onNodeSelect, selectedId }: Props) {
   const ranked = useMemo(() => {

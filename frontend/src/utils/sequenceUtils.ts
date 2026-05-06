@@ -1,17 +1,26 @@
-import type { GraphData, GraphEdge, SequenceActor, SequenceMessage, SequenceDiagram } from '../types/graph'
+import type { GraphData, GraphEdge, GraphNode, SequenceActor, SequenceMessage, SequenceDiagram } from '../types/graph'
 import { ACCENT_COLORS } from './graphConstants'
 
-const TYPE_PRIORITY = ['route', 'middleware', 'controller', 'service', 'model', 'job', 'event', 'command', 'channel', 'schedule']
+/** Order columns left-to-right (tokens match `normalizeType` where applicable). */
+const TYPE_PRIORITY = [
+  'route', 'middleware', 'controller', 'action', 'validation_request', 'service', 'model', 'event', 'job',
+  'command', 'channel', 'schedule', 'view', 'mail', 'notification', 'enum', 'interface', 'trait', 'abstract_class', 'service_provider',
+]
 
 function normalizeType(type: string): string {
   return type === 'action' ? 'controller' : type
 }
 
+function typeSortRank(node: GraphNode | undefined): number {
+  if (!node) return 99
+  const t = normalizeType(node.type)
+  const p = TYPE_PRIORITY.indexOf(t)
+  return p === -1 ? 99 : p
+}
+
 function shortLabel(label: string): string {
-  // Strip namespace prefix, keep last segment
   const parts = label.split('\\')
   const last = parts[parts.length - 1]
-  // For routes like "GET /users", keep as-is but truncate
   if (last.length <= 20) return last
   return last.substring(0, 18) + '…'
 }
@@ -25,11 +34,19 @@ function buildOutgoingMap(edges: GraphEdge[]): Map<string, GraphEdge[]> {
   return map
 }
 
+/** Async / fire-and-forget style edges from the Laravel Brain graph. */
+function edgeIsAsync(edgeType: string): boolean {
+  return (
+    edgeType.includes('-to-job') ||
+    edgeType.includes('-to-event') ||
+    edgeType === 'model-to-event'
+  )
+}
+
 export function buildSequenceDiagram(routeNodeId: string, graphData: GraphData): SequenceDiagram {
   const nodeMap = new Map(graphData.nodes.map(n => [n.id, n]))
   const outMap = buildOutgoingMap(graphData.edges)
 
-  // BFS from route node
   const visited = new Set<string>()
   const orderedNodeIds: string[] = []
   const orderedEdges: GraphEdge[] = []
@@ -48,71 +65,55 @@ export function buildSequenceDiagram(routeNodeId: string, graphData: GraphData):
     }
   }
 
-  // Build actors: collapse nodes of same canonical type into one actor (first seen wins)
+  // One participant per graph node so multiple middleware (and services, models, …) match the graph.
   const actors: SequenceActor[] = []
-  const canonTypeToActorIndex = new Map<string, number>()
   const nodeToActorIndex = new Map<string, number>()
 
-  // Sort orderedNodeIds by TYPE_PRIORITY to get deterministic column order
   const sortedNodeIds = [...orderedNodeIds].sort((a, b) => {
-    const nodeA = nodeMap.get(a)
-    const nodeB = nodeMap.get(b)
-    const typeA = nodeA ? normalizeType(nodeA.type) : 'unknown'
-    const typeB = nodeB ? normalizeType(nodeB.type) : 'unknown'
-    const pa = TYPE_PRIORITY.indexOf(typeA)
-    const pb = TYPE_PRIORITY.indexOf(typeB)
-    return (pa === -1 ? 99 : pa) - (pb === -1 ? 99 : pb)
+    const ra = typeSortRank(nodeMap.get(a))
+    const rb = typeSortRank(nodeMap.get(b))
+    if (ra !== rb) return ra - rb
+    return a.localeCompare(b)
   })
 
   for (const nodeId of sortedNodeIds) {
     const node = nodeMap.get(nodeId)
     if (!node) continue
-    const canonType = normalizeType(node.type)
-    if (!canonTypeToActorIndex.has(canonType)) {
-      const idx = actors.length
-      canonTypeToActorIndex.set(canonType, idx)
-      actors.push({
-        id: node.id,
-        label: shortLabel(node.label),
-        type: canonType,
-        color: ACCENT_COLORS[canonType] ?? ACCENT_COLORS[node.type] ?? '#888',
-      })
-    }
-    nodeToActorIndex.set(nodeId, canonTypeToActorIndex.get(canonType)!)
+    const idx = actors.length
+    nodeToActorIndex.set(nodeId, idx)
+    const displayType = normalizeType(node.type)
+    actors.push({
+      id: node.id,
+      label: shortLabel(node.label),
+      type: displayType,
+      color: ACCENT_COLORS[node.type] ?? ACCENT_COLORS[displayType] ?? '#888',
+    })
   }
 
-  // Prepend a synthetic "Client" actor
   actors.unshift({ id: '__client__', label: 'Client', type: 'client', color: '#78909C' })
-  // Shift all actor indices by 1
-  for (const [key, val] of nodeToActorIndex) {
-    nodeToActorIndex.set(key, val + 1)
-  }
-  for (const [key, val] of canonTypeToActorIndex) {
-    canonTypeToActorIndex.set(key, val + 1)
+  for (const id of [...nodeToActorIndex.keys()]) {
+    nodeToActorIndex.set(id, nodeToActorIndex.get(id)! + 1)
   }
 
-  // Append synthetic DB actor if model is present
+  const modelNodeIds = sortedNodeIds.filter(id => nodeMap.get(id)?.type === 'model')
   let dbActorIndex: number | null = null
-  if (canonTypeToActorIndex.has('model')) {
+  if (modelNodeIds.length > 0) {
     dbActorIndex = actors.length
     actors.push({ id: '__db__', label: 'Database', type: 'db', color: '#78909C' })
   }
 
-  // Build messages from edges (in BFS traversal order)
   const messages: SequenceMessage[] = []
 
-  // First message: Client → Route
   const routeActorIndex = nodeToActorIndex.get(routeNodeId)
   if (routeActorIndex !== undefined) {
     messages.push({ fromIndex: 0, toIndex: routeActorIndex, label: 'request', isReturn: false })
   }
 
-  // Edges from BFS
   for (const edge of orderedEdges) {
     const from = nodeToActorIndex.get(edge.source)
     const to = nodeToActorIndex.get(edge.target)
     if (from === undefined || to === undefined || from === to) continue
-    const isAsync = edge.type === 'dispatches' || edge.type === 'fires' || edge.type === 'queues'
+    const isAsync = edgeIsAsync(edge.type)
     messages.push({
       fromIndex: from,
       toIndex: to,
@@ -121,19 +122,19 @@ export function buildSequenceDiagram(routeNodeId: string, graphData: GraphData):
     })
   }
 
-  // Synthetic DB query/result messages if model actor exists
-  if (dbActorIndex !== null && canonTypeToActorIndex.has('model')) {
-    const modelIdx = canonTypeToActorIndex.get('model')!
-    messages.push({ fromIndex: modelIdx, toIndex: dbActorIndex, label: 'query', isReturn: false })
-    messages.push({ fromIndex: dbActorIndex, toIndex: modelIdx, label: 'result', isReturn: true })
+  if (dbActorIndex !== null) {
+    for (const modelId of modelNodeIds) {
+      const modelIdx = nodeToActorIndex.get(modelId)
+      if (modelIdx === undefined) continue
+      messages.push({ fromIndex: modelIdx, toIndex: dbActorIndex, label: 'query', isReturn: false })
+      messages.push({ fromIndex: dbActorIndex, toIndex: modelIdx, label: 'result', isReturn: true })
+    }
   }
 
-  // Final return: Route → Client
   if (routeActorIndex !== undefined) {
     messages.push({ fromIndex: routeActorIndex, toIndex: 0, label: 'response', isReturn: true })
   }
 
-  // Deduplicate messages with same from/to/label — suffix with ×N count
   const seen = new Map<string, { idx: number; count: number }>()
   const dedupedMessages: SequenceMessage[] = []
   for (const msg of messages) {
@@ -162,26 +163,24 @@ export function sequenceDiagramToMermaid(diagram: SequenceDiagram, routeLabel: s
     `  autonumber`,
   ]
 
-  for (const actor of diagram.actors) {
-    const safeId = actor.id.replace(/[^a-zA-Z0-9_]/g, '_')
+  // Stable P0..Pn ids avoid collisions when node ids sanitize to the same string.
+  for (let i = 0; i < diagram.actors.length; i++) {
+    const actor = diagram.actors[i]
+    const pid = `P${i}`
     const displayLabel = actor.label.replace(/"/g, "'")
-    if (safeId === actor.label || actor.label === actor.id) {
-      lines.push(`  participant ${safeId}`)
-    } else {
-      lines.push(`  participant ${safeId} as "${displayLabel}"`)
-    }
+    lines.push(`  participant ${pid} as "${displayLabel}"`)
   }
 
   lines.push(``)
 
   for (const msg of diagram.messages) {
-    const fromId = diagram.actors[msg.fromIndex]?.id.replace(/[^a-zA-Z0-9_]/g, '_') ?? 'Unknown'
-    const toId = diagram.actors[msg.toIndex]?.id.replace(/[^a-zA-Z0-9_]/g, '_') ?? 'Unknown'
+    const fromId = `P${msg.fromIndex}`
+    const toId = `P${msg.toIndex}`
     const label = msg.label.replace(/"/g, "'")
 
     let arrow: string
     if (msg.isAsync) {
-      arrow = '->>'  // fire-and-forget
+      arrow = '->>'
     } else if (msg.isReturn) {
       arrow = '-->>'
     } else {

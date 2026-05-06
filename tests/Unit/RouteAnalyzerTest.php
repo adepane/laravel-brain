@@ -47,7 +47,15 @@ it('applies prefix from nested group', function () use ($fixtureProject) {
     expect($adminRoute->middlewares)->toContain('role:admin');
 });
 
-it('finds 5 routes total', function () use ($fixtureProject) {
+it('finds 13 routes total', function () use ($fixtureProject) {
     $routes = (new RouteAnalyzer)->analyze($fixtureProject);
-    expect(count($routes))->toBe(5);
+    expect(count($routes))->toBe(13);
+});
+
+it('captures middleware chained after the HTTP method call', function () use ($fixtureProject) {
+    $routes = (new RouteAnalyzer)->analyze($fixtureProject);
+    $brandsRoute = findRoute($routes, fn ($r) => $r->uri === '/brands' && $r->method === 'GET');
+
+    expect($brandsRoute)->not->toBeNull();
+    expect($brandsRoute->middlewares)->toContain('ability:view-maintenance-requests,monitor-maintenance,create-transfer');
 });

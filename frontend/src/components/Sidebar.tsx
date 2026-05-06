@@ -27,12 +27,21 @@ const TYPE_COLORS: Record<string, string> = {
   controller: '#2196F3',
   action:     '#03A9F4',
   service:    '#9C27B0',
+  validation_request: '#0d9488',
   model:      '#F44336',
   event:      '#FFD600',
   job:        '#607D8B',
   command:    '#14b8a6',
   channel:    '#8b5cf6',
   schedule:   '#f97316',
+  view:       '#ec4899',
+  mail:       '#f472b6',
+  notification: '#db2777',
+  enum:       '#0ea5e9',
+  interface:  '#38bdf8',
+  trait:      '#a78bfa',
+  abstract_class: '#94a3b8',
+  service_provider: '#ca8a04',
   filament_panel:            '#7C3AED',
   filament_resource:         '#A855F7',
   filament_page:             '#C084FC',
@@ -199,6 +208,13 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
 
   const dbQueries = (node.data?.dbQueries ?? []) as DbQuery[]
   const relationships = (node.data?.relationships ?? []) as Array<{ type: string; related: string }>
+  const middlewareParams = (node.type === 'middleware' && typeof node.data?.params === 'string' && node.data.params)
+    ? (node.data.params as string).split(',').map(s => s.trim()).filter(Boolean)
+    : []
+
+  const structureMembers = (node.data?.members ?? []) as Array<Record<string, unknown>>
+
+  const validationRules = (node.data?.validationRules ?? []) as Array<{ field: string; rules: string }>
 
   const displayData = Object.entries(node.data ?? {}).filter(
     ([key, val]) =>
@@ -209,6 +225,9 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
       key !== 'classMetrics' &&
       key !== 'dbQueries' &&
       key !== 'relationships' &&
+      key !== 'params' &&
+      key !== 'members' &&
+      key !== 'validationRules' &&
       !(Array.isArray(val) && val.length === 0)
   )
 
@@ -364,6 +383,33 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
                 </div>
               )}
 
+              {middlewareParams.length > 0 && (
+                <div className="sidebar-section">
+                  <h3>ATTRIBUTES</h3>
+                  {middlewareParams.map((ability, i) => (
+                    <div key={i} className="prop-row">
+                      <span className="prop-key" style={{ color: '#FF9800' }}>{i + 1}</span>
+                      <span className="prop-value">{ability}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {validationRules.length > 0 && (
+                <div className="sidebar-section sidebar-section--validation-rules">
+                  <h3>Validation rules</h3>
+                  <ul className="sidebar-structure-list">
+                    {validationRules.map((row, i) => (
+                      <li key={i} className="sidebar-structure-item">
+                        <span className="structure-kind">field</span>
+                        <span className="structure-name">{row.field}</span>
+                        <span className="structure-value">{row.rules}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {dbQueries.length > 0 && (
                 <div className="sidebar-section sidebar-section--queries">
                   <h3>DB Queries</h3>
@@ -386,6 +432,30 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
                       )
                     })}
                   </div>
+                </div>
+              )}
+
+              {structureMembers.length > 0 && (
+                <div className="sidebar-section">
+                  <h3>Structure</h3>
+                  <ul className="sidebar-structure-list">
+                    {structureMembers.map((m, i) => (
+                      <li key={i} className="sidebar-structure-item">
+                        <span className="structure-kind">{String(m.kind ?? 'item')}</span>
+                        <span className="structure-name">{String(m.name ?? '')}</span>
+                        {typeof m.declaringClass === 'string' && m.declaringClass !== '' && (
+                          <span className="structure-decl" title="Declared on parent class">{m.declaringClass}</span>
+                        )}
+                        {m.value !== undefined && m.value !== null && (
+                          <span className="structure-value">{String(m.value)}</span>
+                        )}
+                        {m.static === true && <span className="structure-flag">static</span>}
+                        {typeof m.visibility === 'string' && (
+                          <span className="structure-vis">{m.visibility}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
 

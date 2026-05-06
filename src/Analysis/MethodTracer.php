@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LaraMint\LaravelBrain\Analysis;
 
+use LaraMint\LaravelBrain\Parser\PhpExtendsFqcnResolver;
 use LaraMint\LaravelBrain\Parser\PhpFileParser;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
@@ -37,6 +38,9 @@ class MethodTrace
  */
 class MethodTracer
 {
+    /** Sentinel FQCN prefix for Blade views in call-chain edges (actual name: blade::{dot.notation}) */
+    public const BLADE_FQCN_PREFIX = 'blade::';
+
     public const MODEL_STATIC_METHODS = [
         'where', 'whereIn', 'whereNotIn', 'find', 'findOrFail', 'findMany',
         'first', 'firstOrFail', 'firstOrCreate', 'firstOrNew',
@@ -59,9 +63,15 @@ class MethodTracer
 
     private string $projectRoot = '';
 
+    private PhpStructureInspector $structureInspector;
+
+    /** @var array<string, 'enum'|'interface'|'trait'|'abstract_class'|null> */
+    private array $declKindCache = [];
+
     public function __construct()
     {
         $this->parser = new PhpFileParser;
+        $this->structureInspector = new PhpStructureInspector($this->parser);
     }
 
     /**
@@ -108,12 +118,16 @@ class MethodTracer
                 $key = $controller->fqcn.'::'.$methodDef->name;
                 $this->visited[$key] = true;
 
+                $declaringFqcn = $methodDef->declaringFqcn ?? $controller->fqcn;
+                $declaringInfo = $this->loadClass($declaringFqcn);
+                $parentForLexical = $declaringInfo['parent'] ?? null;
+
                 $discovered = $this->scanMethod(
                     $methodDef->ast,
                     $deps,
-                    $controller->useMap,
-                    $controller->fqcn,
-                    $controller->parent,
+                    $methodDef->methodUseMap ?? $controller->useMap,
+                    $declaringFqcn,
+                    $parentForLexical,
                 );
 
                 foreach ($discovered as $hop) {
@@ -127,7 +141,7 @@ class MethodTracer
                     );
 
                     // Recurse into non-leaf hops (services, repositories)
-                    if (in_array($hop['type'], ['service', 'repository', 'action'], true)) {
+                    if (in_array($hop['type'], ['service', 'repository', 'action', 'mail', 'notification', 'abstract_class'], true)) {
                         $subEdges = $this->traceDeep(
                             $hop['fqcn'],
                             $hop['method'],
@@ -165,12 +179,20 @@ class MethodTracer
         }
         $this->visited[$key] = true;
 
+        if (str_starts_with($fqcn, self::BLADE_FQCN_PREFIX)) {
+            return [];
+        }
+
         $classInfo = $this->loadClass($fqcn);
         if ($classInfo === null) {
             return [];
         }
 
         $methodAst = $classInfo['methods'][$method] ?? null;
+        if ($methodAst === null) {
+            $method = $this->fallbackEntryMethod($fqcn, $method, $classInfo['methods']);
+            $methodAst = $classInfo['methods'][$method] ?? null;
+        }
         if ($methodAst === null) {
             return [];
         }
@@ -194,7 +216,7 @@ class MethodTracer
                 visibility: $hop['visibility'],
             );
 
-            if (in_array($hop['type'], ['service', 'repository', 'action'], true)) {
+            if (in_array($hop['type'], ['service', 'repository', 'action', 'mail', 'notification', 'abstract_class'], true)) {
                 $subEdges = $this->traceDeep($hop['fqcn'], $hop['method'], $depth + 1);
                 foreach ($subEdges as $sub) {
                     $edges[] = $sub;
@@ -218,7 +240,7 @@ class MethodTracer
     ): array {
         $traverser = new NodeTraverser;
 
-        $visitor = new class($varTypeMap, $useMap, $currentFqcn, $parentFqcn) extends NodeVisitorAbstract
+        $visitor = new class($varTypeMap, $useMap, $currentFqcn, $parentFqcn, $this) extends NodeVisitorAbstract
         {
             /** @var list<array{fqcn:string,method:string,type:string,visibility:string}> */
             public array $hops = [];
@@ -237,8 +259,13 @@ class MethodTracer
 
             private const DISPATCH_FUNCTIONS = ['dispatch'];
 
-            public function __construct(array $varTypeMap, array $useMap, string $currentFqcn, ?string $parentFqcn = null)
-            {
+            public function __construct(
+                array $varTypeMap,
+                array $useMap,
+                string $currentFqcn,
+                ?string $parentFqcn,
+                private MethodTracer $tracer,
+            ) {
                 $this->varTypeMap = $varTypeMap;
                 $this->useMap = $useMap;
                 $this->currentFqcn = $currentFqcn;
@@ -257,6 +284,8 @@ class MethodTracer
                     $this->handleNew($node);
                 } elseif ($node instanceof Node\Expr\Assign) {
                     $this->handleAssign($node);
+                } elseif ($node instanceof Node\Expr\ClassConstFetch) {
+                    $this->handleClassConstFetch($node);
                 }
 
                 return null;
@@ -309,6 +338,39 @@ class MethodTracer
                     return;
                 }
 
+                // View::make('name')
+                if (in_array($class, ['View', 'Illuminate\\Support\\Facades\\View'], true) && $method === 'make') {
+                    $vn = $this->extractViewName($node->args[0] ?? null);
+                    if ($vn !== null) {
+                        $this->hops[] = [
+                            'fqcn' => MethodTracer::BLADE_FQCN_PREFIX.$vn,
+                            'method' => 'render',
+                            'type' => 'view',
+                            'visibility' => 'public',
+                        ];
+                    }
+
+                    return;
+                }
+
+                // Notification::send($users, new SomeNotification(...))
+                if (in_array($class, ['Notification', 'Illuminate\\Support\\Facades\\Notification'], true) && $method === 'send') {
+                    $notifClass = $this->extractNewClass($node->args[1] ?? null);
+                    if ($notifClass) {
+                        $nf = $this->useMap[$notifClass] ?? $notifClass;
+                        if ($this->tracer->looksLikeNotification($nf)) {
+                            $this->hops[] = [
+                                'fqcn' => $nf,
+                                'method' => 'via',
+                                'type' => 'notification',
+                                'visibility' => 'public',
+                            ];
+                        }
+                    }
+
+                    return;
+                }
+
                 // Eloquent static queries: User::find(), Order::create() …
                 if ($this->looksLikeModel($fqcn) && in_array($method, MethodTracer::MODEL_STATIC_METHODS, true)) {
                     $this->hops[] = ['fqcn' => $fqcn, 'method' => $method, 'type' => 'model', 'visibility' => 'public'];
@@ -322,6 +384,49 @@ class MethodTracer
                 $method = $node->name instanceof Node\Identifier ? $node->name->toString() : null;
                 if ($method === null) {
                     return;
+                }
+
+                if ($method === 'view' && ! empty($node->args)) {
+                    $vn = $this->extractViewName($node->args[0] ?? null);
+                    if ($vn !== null) {
+                        $this->hops[] = [
+                            'fqcn' => MethodTracer::BLADE_FQCN_PREFIX.$vn,
+                            'method' => 'render',
+                            'type' => 'view',
+                            'visibility' => 'public',
+                        ];
+
+                        return;
+                    }
+                }
+
+                if ($method === 'send' && ! empty($node->args)) {
+                    $first = $node->args[0];
+                    $val = $first instanceof Node\Arg ? $first->value : $first;
+                    if ($val instanceof Node\Expr\New_ && $val->class instanceof Node\Name) {
+                        $short = $val->class->toString();
+                        $nf = $this->useMap[$short] ?? $short;
+                        if ($this->tracer->looksLikeMail($nf)) {
+                            $this->hops[] = [
+                                'fqcn' => $nf,
+                                'method' => 'build',
+                                'type' => 'mail',
+                                'visibility' => 'public',
+                            ];
+
+                            return;
+                        }
+                        if ($this->tracer->looksLikeNotification($nf)) {
+                            $this->hops[] = [
+                                'fqcn' => $nf,
+                                'method' => 'via',
+                                'type' => 'notification',
+                                'visibility' => 'public',
+                            ];
+
+                            return;
+                        }
+                    }
                 }
 
                 $fqcn = $this->resolveVar($node->var);
@@ -346,6 +451,20 @@ class MethodTracer
                     return;
                 }
                 $funcName = $node->name->toString();
+
+                if ($funcName === 'view') {
+                    $vn = $this->extractViewName($node->args[0] ?? null);
+                    if ($vn !== null) {
+                        $this->hops[] = [
+                            'fqcn' => MethodTracer::BLADE_FQCN_PREFIX.$vn,
+                            'method' => 'render',
+                            'type' => 'view',
+                            'visibility' => 'public',
+                        ];
+                    }
+
+                    return;
+                }
 
                 if (in_array($funcName, self::EVENT_FUNCTIONS, true)) {
                     $eventClass = $this->extractNewClass($node->args[0] ?? null);
@@ -382,6 +501,26 @@ class MethodTracer
                     // Caught by dispatch() later; skip to avoid double-counting
                     return;
                 }
+                if ($this->tracer->looksLikeMail($fqcn)) {
+                    $this->hops[] = [
+                        'fqcn' => $fqcn,
+                        'method' => 'build',
+                        'type' => 'mail',
+                        'visibility' => 'public',
+                    ];
+
+                    return;
+                }
+                if ($this->tracer->looksLikeNotification($fqcn)) {
+                    $this->hops[] = [
+                        'fqcn' => $fqcn,
+                        'method' => 'via',
+                        'type' => 'notification',
+                        'visibility' => 'public',
+                    ];
+
+                    return;
+                }
                 if (! $this->looksLikeModel($fqcn) && ! $this->isFrameworkClass($fqcn) && str_contains($fqcn, '\\')) {
                     $type = $this->classifyFqcn($fqcn);
                     $this->hops[] = [
@@ -413,6 +552,48 @@ class MethodTracer
                 if (! $this->looksLikeModel($fqcn) && ! $this->isFrameworkClass($fqcn) && str_contains($fqcn, '\\')) {
                     $this->varTypeMap[$varName] = $fqcn;
                 }
+            }
+
+            private function handleClassConstFetch(Node\Expr\ClassConstFetch $node): void
+            {
+                if (! $node->class instanceof Node\Name) {
+                    return;
+                }
+                if ($node->name instanceof Node\Identifier && $node->name->toString() === 'class') {
+                    return;
+                }
+                $short = $node->class->toString();
+                $lower = strtolower($short);
+                if (in_array($lower, ['self', 'static', 'parent'], true)) {
+                    return;
+                }
+                $fqcn = $this->useMap[$short] ?? $short;
+                if (! str_contains($fqcn, '\\')) {
+                    return;
+                }
+                if (! $this->tracer->declKindIsEnum($fqcn)) {
+                    return;
+                }
+                $cons = $node->name instanceof Node\Identifier ? $node->name->toString() : 'case';
+                $this->hops[] = [
+                    'fqcn' => $fqcn,
+                    'method' => $cons,
+                    'type' => 'enum',
+                    'visibility' => 'public',
+                ];
+            }
+
+            private function extractViewName(?Node $node): ?string
+            {
+                if ($node === null) {
+                    return null;
+                }
+                $value = $node instanceof Node\Arg ? $node->value : $node;
+                if ($value instanceof Node\Scalar\String_) {
+                    return $value->value;
+                }
+
+                return null;
             }
 
             private function resolveVisibility(Node\Expr\MethodCall|Node\Expr\StaticCall|Node\Expr\New_ $node): string
@@ -484,6 +665,19 @@ class MethodTracer
 
             private function classifyFqcn(string $fqcn): string
             {
+                $decl = $this->tracer->declarationKind($fqcn);
+                if ($decl === 'interface') {
+                    return 'interface';
+                }
+                if ($decl === 'enum') {
+                    return 'enum';
+                }
+                if ($decl === 'trait') {
+                    return 'trait';
+                }
+                if ($decl === 'abstract_class') {
+                    return 'abstract_class';
+                }
                 if (str_contains($fqcn, 'Controller') || str_contains($fqcn, '\\Http\\')) {
                     return 'action';
                 }
@@ -539,8 +733,13 @@ class MethodTracer
             return $this->classCache[$fqcn] = null;
         }
 
+        $expectedShort = str_contains($fqcn, '\\')
+            ? substr($fqcn, strrpos($fqcn, '\\') + 1)
+            : $fqcn;
+        $fileNamespace = PhpExtendsFqcnResolver::namespaceFromAst($parsed['ast']);
+
         $traverser = new NodeTraverser;
-        $visitor = new class extends NodeVisitorAbstract
+        $visitor = new class($expectedShort) extends NodeVisitorAbstract
         {
             public array $constructorDeps = []; // varName/prop => FQCN
 
@@ -548,12 +747,17 @@ class MethodTracer
 
             public array $useMap = [];
 
-            public ?string $extends = null;
+            public ?Node $extendsNode = null;
+
+            public function __construct(private string $expectedShort) {}
 
             public function enterNode(Node $node): ?int
             {
                 if ($node instanceof Node\Stmt\Class_) {
-                    $this->extends = $node->extends ? $node->extends->toString() : null;
+                    if ($node->name === null || $node->name->toString() !== $this->expectedShort) {
+                        return null;
+                    }
+                    $this->extendsNode = $node->extends;
                 }
                 if ($node instanceof Node\Stmt\ClassMethod) {
                     $name = $node->name->toString();
@@ -607,11 +811,17 @@ class MethodTracer
             $deps[$var] = $useMap[$short] ?? $short;
         }
 
+        $parentFqcn = PhpExtendsFqcnResolver::resolveExtends(
+            $visitor->extendsNode,
+            $fileNamespace,
+            $useMap,
+        );
+
         $result = [
             'methods' => $visitor->methods,
             'deps' => $deps,
             'useMap' => $useMap,
-            'parent' => $visitor->extends ? ($useMap[$visitor->extends] ?? $visitor->extends) : null,
+            'parent' => $parentFqcn,
         ];
 
         return $this->classCache[$fqcn] = $result;
@@ -670,5 +880,72 @@ class MethodTracer
         }
 
         return null;
+    }
+
+    private function fallbackEntryMethod(string $fqcn, string $requested, array $methods): string
+    {
+        if (isset($methods[$requested])) {
+            return $requested;
+        }
+        if ($this->looksLikeMail($fqcn)) {
+            foreach (['build', 'envelope', 'content', '__construct'] as $m) {
+                if (isset($methods[$m])) {
+                    return $m;
+                }
+            }
+        }
+        if ($this->looksLikeNotification($fqcn)) {
+            foreach (['via', 'toMail', 'toArray', 'toBroadcast', '__construct'] as $m) {
+                if (isset($methods[$m])) {
+                    return $m;
+                }
+            }
+        }
+
+        return $requested;
+    }
+
+    public function looksLikeMail(string $class): bool
+    {
+        return str_contains($class, '\\Mail\\')
+            || str_contains($class, '\\Mails\\')
+            || str_contains($class, 'Mailable');
+    }
+
+    public function looksLikeNotification(string $class): bool
+    {
+        return str_contains($class, '\\Notifications\\');
+    }
+
+    public function declKindIsEnum(string $fqcn): bool
+    {
+        return $this->declKindForFqcn($fqcn) === 'enum';
+    }
+
+    /**
+     * Surface syntax kind of an FQCN's declaring file (enum, interface, trait, or abstract class only).
+     *
+     * @return 'enum'|'interface'|'trait'|'abstract_class'|null
+     */
+    public function declarationKind(string $fqcn): ?string
+    {
+        return $this->declKindForFqcn($fqcn);
+    }
+
+    private function declKindForFqcn(string $fqcn): ?string
+    {
+        if (array_key_exists($fqcn, $this->declKindCache)) {
+            return $this->declKindCache[$fqcn];
+        }
+        $file = $this->resolveFile($fqcn);
+        if ($file === null || ! is_file($file)) {
+            return $this->declKindCache[$fqcn] = null;
+        }
+        $info = $this->structureInspector->inspectFile($file);
+        if ($info === null) {
+            return $this->declKindCache[$fqcn] = null;
+        }
+
+        return $this->declKindCache[$fqcn] = $info['kind'];
     }
 }

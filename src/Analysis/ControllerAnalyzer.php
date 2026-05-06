@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LaraMint\LaravelBrain\Analysis;
 
+use LaraMint\LaravelBrain\Parser\PhpExtendsFqcnResolver;
 use LaraMint\LaravelBrain\Parser\PhpFileParser;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
@@ -16,20 +17,57 @@ class MethodDefinition
         public array $dependencies, // varName => FQCN
         public ?Node\Stmt\ClassMethod $ast = null,
         public string $visibility = 'public',
+        /** @var array<string, string>|null  use map from the declaring file; null = use ControllerDefinition.useMap */
+        public ?array $methodUseMap = null,
+        /** FQCN of the class that declares this method in source (for inherited actions). */
+        public ?string $declaringFqcn = null,
     ) {}
+}
+
+/**
+ * A single middleware declared at controller level, optionally scoped to specific actions.
+ * Supports both the HasMiddleware static method and $this->middleware() constructor calls.
+ */
+class ControllerMiddleware
+{
+    public function __construct(
+        public string $middleware,
+        /** @var string[]|null null = applies to every action */
+        public ?array $only = null,
+        /** @var string[]|null null = no exclusions */
+        public ?array $except = null,
+    ) {}
+
+    public function appliesToAction(string $action): bool
+    {
+        if ($this->only !== null && ! in_array($action, $this->only, true)) {
+            return false;
+        }
+        if ($this->except !== null && in_array($action, $this->except, true)) {
+            return false;
+        }
+
+        return true;
+    }
 }
 
 class ControllerDefinition
 {
+    /**
+     * @param  MethodDefinition[]  $methods
+     * @param  array<string, string>  $useMap
+     * @param  ControllerMiddleware[]  $middlewares
+     * @param  list<string>  $ancestorFqcns  immediate parent first, then each ancestor (stops before Illuminate/Laravel)
+     */
     public function __construct(
         public string $fqcn,
         public string $file,
         public array $constructorDeps, // varName => FQCN
-        /** @var MethodDefinition[] */
         public array $methods,
-        /** @var array<string, string> */
         public array $useMap = [],
         public ?string $parent = null,
+        public array $middlewares = [],
+        public array $ancestorFqcns = [],
     ) {}
 }
 
@@ -73,7 +111,8 @@ class ControllerAnalyzer
 
             $definition = $this->analyzeFile($fqcn, $file);
             if ($definition !== null) {
-                $definitions[$fqcn] = $definition;
+                $visited = [];
+                $definitions[$fqcn] = $this->mergeInheritedMethods($definition, $projectRoot, $visited);
             }
         }
 
@@ -87,26 +126,43 @@ class ControllerAnalyzer
             return null;
         }
 
+        $expectedShort = str_contains($fqcn, '\\')
+            ? substr($fqcn, strrpos($fqcn, '\\') + 1)
+            : $fqcn;
+        $fileNamespace = PhpExtendsFqcnResolver::namespaceFromAst($parsed['ast']);
+
         $traverser = new NodeTraverser;
-        $visitor = new class($parsed['useMap']) extends NodeVisitorAbstract
+        $visitor = new class($parsed['useMap'], $expectedShort, $fqcn) extends NodeVisitorAbstract
         {
             public array $constructorDeps = [];
 
             public array $methods = [];
 
-            public ?string $extends = null;
+            public ?Node $extendsNode = null;
+
+            /** @var ControllerMiddleware[] */
+            public array $middlewares = [];
 
             private array $useMap;
 
-            public function __construct(array $useMap)
+            private string $expectedShort;
+
+            private string $classFqcn;
+
+            public function __construct(array $useMap, string $expectedShort, string $classFqcn)
             {
                 $this->useMap = $useMap;
+                $this->expectedShort = $expectedShort;
+                $this->classFqcn = $classFqcn;
             }
 
             public function enterNode(Node $node): ?int
             {
                 if ($node instanceof Node\Stmt\Class_) {
-                    $this->extends = $node->extends ? $node->extends->toString() : null;
+                    if ($node->name === null || $node->name->toString() !== $this->expectedShort) {
+                        return null;
+                    }
+                    $this->extendsNode = $node->extends;
                 }
                 if (! $node instanceof Node\Stmt\ClassMethod) {
                     return null;
@@ -114,17 +170,196 @@ class ControllerAnalyzer
 
                 $methodName = $node->name->toString();
                 $deps = $this->extractTypedParams($node->params);
-
                 $visibility = $this->extractVisibility($node);
 
                 if ($methodName === '__construct') {
                     $this->constructorDeps = $deps;
+                    // $this->middleware('auth')->only([...])->except([...])
+                    $this->middlewares = array_merge(
+                        $this->middlewares,
+                        $this->extractConstructorMiddlewares($node)
+                    );
+                } elseif ($methodName === 'middleware' && $node->isStatic()) {
+                    // HasMiddleware interface: public static function middleware(): array { return [...] }
+                    $this->middlewares = array_merge(
+                        $this->middlewares,
+                        $this->extractStaticMiddlewareMethod($node)
+                    );
                 } else {
-                    $this->methods[] = new MethodDefinition($methodName, $deps, $node, $visibility);
+                    $this->methods[] = new MethodDefinition($methodName, $deps, $node, $visibility, null, $this->classFqcn);
                 }
 
                 return null;
             }
+
+            // ── Middleware extraction ─────────────────────────────────────────
+
+            /**
+             * Handles: public static function middleware(): array { return ['auth', new Middleware(...)] }
+             *
+             * @return ControllerMiddleware[]
+             */
+            private function extractStaticMiddlewareMethod(Node\Stmt\ClassMethod $node): array
+            {
+                $result = [];
+                foreach ($node->stmts ?? [] as $stmt) {
+                    if (! $stmt instanceof Node\Stmt\Return_) {
+                        continue;
+                    }
+                    if (! $stmt->expr instanceof Node\Expr\Array_) {
+                        continue;
+                    }
+                    foreach ($stmt->expr->items as $item) {
+                        if (! $item) {
+                            continue;
+                        }
+                        $val = $item->value;
+                        if ($val instanceof Node\Scalar\String_) {
+                            $result[] = new ControllerMiddleware($val->value);
+                        } elseif ($val instanceof Node\Expr\New_) {
+                            $cm = $this->extractFromNewMiddleware($val);
+                            if ($cm !== null) {
+                                $result[] = $cm;
+                            }
+                        }
+                    }
+                }
+
+                return $result;
+            }
+
+            /**
+             * Parses: new Middleware('name', only: ['index'], except: ['store'])
+             * Also handles positional: new Middleware('name', ['index'], ['store'])
+             */
+            private function extractFromNewMiddleware(Node\Expr\New_ $expr): ?ControllerMiddleware
+            {
+                $mwName = null;
+                $only = null;
+                $except = null;
+
+                foreach ($expr->args as $i => $arg) {
+                    if (! $arg instanceof Node\Arg) {
+                        continue;
+                    }
+                    // Named argument
+                    if ($arg->name instanceof Node\Identifier) {
+                        $argName = $arg->name->toString();
+                        if ($argName === 'middleware' || $argName === 'name') {
+                            $mwName = $arg->value instanceof Node\Scalar\String_ ? $arg->value->value : null;
+                        } elseif ($argName === 'only') {
+                            $only = $this->extractStringArray($arg->value);
+                        } elseif ($argName === 'except') {
+                            $except = $this->extractStringArray($arg->value);
+                        }
+                    } else {
+                        // Positional: first = name, second = only, third = except
+                        if ($i === 0) {
+                            $mwName = $arg->value instanceof Node\Scalar\String_ ? $arg->value->value : null;
+                        } elseif ($i === 1) {
+                            $only = $this->extractStringArray($arg->value);
+                        } elseif ($i === 2) {
+                            $except = $this->extractStringArray($arg->value);
+                        }
+                    }
+                }
+
+                return $mwName !== null ? new ControllerMiddleware($mwName, $only, $except) : null;
+            }
+
+            /**
+             * Handles both styles inside __construct:
+             *   $this->middleware('auth');
+             *   $this->middleware('auth', ['only' => ['index']]);
+             *   $this->middleware('auth')->only(['index'])->except(['store']);
+             *
+             * @return ControllerMiddleware[]
+             */
+            private function extractConstructorMiddlewares(Node\Stmt\ClassMethod $node): array
+            {
+                $result = [];
+                foreach ($node->stmts ?? [] as $stmt) {
+                    if (! $stmt instanceof Node\Stmt\Expression) {
+                        continue;
+                    }
+                    $cm = $this->extractThisMiddlewareChain($stmt->expr);
+                    if ($cm !== null) {
+                        $result[] = $cm;
+                    }
+                }
+
+                return $result;
+            }
+
+            /**
+             * Walks a method-call chain bottom-up, collecting ->only() / ->except() modifiers,
+             * until it finds the base $this->middleware('name') call.
+             */
+            private function extractThisMiddlewareChain(Node\Expr $expr): ?ControllerMiddleware
+            {
+                $only = null;
+                $except = null;
+                $current = $expr;
+
+                while ($current instanceof Node\Expr\MethodCall) {
+                    $name = $current->name instanceof Node\Identifier ? $current->name->toString() : null;
+
+                    if ($name === 'only' && ! empty($current->args)) {
+                        $only = $this->extractStringArray($current->args[0]->value);
+                    } elseif ($name === 'except' && ! empty($current->args)) {
+                        $except = $this->extractStringArray($current->args[0]->value);
+                    } elseif ($name === 'middleware') {
+                        // Base call must be on $this
+                        if (! ($current->var instanceof Node\Expr\Variable && $current->var->name === 'this')) {
+                            return null;
+                        }
+
+                        $firstArg = $current->args[0] ?? null;
+                        if (! $firstArg instanceof Node\Arg || ! $firstArg->value instanceof Node\Scalar\String_) {
+                            return null;
+                        }
+                        $mwName = $firstArg->value->value;
+
+                        // Also support direct array form: $this->middleware('x', ['only' => [...]])
+                        $secondArg = $current->args[1] ?? null;
+                        if ($secondArg instanceof Node\Arg && $secondArg->value instanceof Node\Expr\Array_) {
+                            foreach ($secondArg->value->items as $item) {
+                                if (! $item || ! $item->key instanceof Node\Scalar\String_) {
+                                    continue;
+                                }
+                                if ($item->key->value === 'only' && $only === null) {
+                                    $only = $this->extractStringArray($item->value);
+                                } elseif ($item->key->value === 'except' && $except === null) {
+                                    $except = $this->extractStringArray($item->value);
+                                }
+                            }
+                        }
+
+                        return new ControllerMiddleware($mwName, $only, $except);
+                    }
+
+                    $current = $current->var;
+                }
+
+                return null;
+            }
+
+            private function extractStringArray(Node $node): array
+            {
+                if (! $node instanceof Node\Expr\Array_) {
+                    return [];
+                }
+                $result = [];
+                foreach ($node->items as $item) {
+                    if ($item && $item->value instanceof Node\Scalar\String_) {
+                        $result[] = $item->value->value;
+                    }
+                }
+
+                return $result;
+            }
+
+            // ── Existing helpers ──────────────────────────────────────────────
 
             private function extractTypedParams(array $params): array
             {
@@ -178,13 +413,125 @@ class ControllerAnalyzer
         $traverser->addVisitor($visitor);
         $traverser->traverse($parsed['ast']);
 
+        $parentFqcn = PhpExtendsFqcnResolver::resolveExtends(
+            $visitor->extendsNode,
+            $fileNamespace,
+            $parsed['useMap'],
+        );
+
         return new ControllerDefinition(
             fqcn: $fqcn,
             file: $file,
             constructorDeps: $visitor->constructorDeps,
             methods: $visitor->methods,
             useMap: $parsed['useMap'],
-            parent: $visitor->extends ? ($parsed['useMap'][$visitor->extends] ?? $visitor->extends) : null,
+            parent: $parentFqcn,
+            middlewares: $visitor->middlewares,
+            ancestorFqcns: [],
+        );
+    }
+
+    /**
+     * Merge instance methods, promoted constructor deps, and middleware from parents so thin
+     * controllers (only overrides) still expose route actions and DI from abstract bases.
+     *
+     * @param  array<string, true>  $visited  recursion / cycle guard (by ref)
+     */
+    private function mergeInheritedMethods(
+        ControllerDefinition $def,
+        string $projectRoot,
+        array &$visited,
+    ): ControllerDefinition {
+        $withMaps = $this->withExplicitMethodUseMaps($def);
+        if ($withMaps->parent === null) {
+            return $withMaps;
+        }
+        if (str_starts_with($withMaps->parent, 'Illuminate\\')
+            || str_starts_with($withMaps->parent, 'Laravel\\')) {
+            return $withMaps;
+        }
+        if (isset($visited[$withMaps->fqcn])) {
+            return $withMaps;
+        }
+        $visited[$withMaps->fqcn] = true;
+
+        $parentFile = $this->resolveFile($withMaps->parent, $projectRoot);
+        if ($parentFile === null || ! is_file($parentFile)) {
+            unset($visited[$withMaps->fqcn]);
+
+            return $withMaps;
+        }
+        $parentDef = $this->analyzeFile($withMaps->parent, $parentFile);
+        if ($parentDef === null) {
+            unset($visited[$withMaps->fqcn]);
+
+            return $withMaps;
+        }
+        $parentMerged = $this->mergeInheritedMethods($parentDef, $projectRoot, $visited);
+        unset($visited[$withMaps->fqcn]);
+
+        $childDeclaresConstruct = $withMaps->constructorDeps !== []
+            || $withMaps->middlewares !== [];
+
+        $mergedDeps = $childDeclaresConstruct ? $withMaps->constructorDeps : $parentMerged->constructorDeps;
+        $mergedMw = $withMaps->middlewares;
+        if (! $childDeclaresConstruct && $parentMerged->middlewares !== []) {
+            $mergedMw = array_merge($parentMerged->middlewares, $mergedMw);
+        }
+
+        $byName = [];
+        foreach ($parentMerged->methods as $m) {
+            if ($m->name === '__construct' || $m->visibility === 'private') {
+                continue;
+            }
+            $byName[$m->name] = $m;
+        }
+        foreach ($withMaps->methods as $m) {
+            if ($m->name === '__construct') {
+                continue;
+            }
+            $byName[$m->name] = $m;
+        }
+
+        $ancestorFqcns = array_values(array_merge([$withMaps->parent], $parentMerged->ancestorFqcns));
+
+        return new ControllerDefinition(
+            fqcn: $withMaps->fqcn,
+            file: $withMaps->file,
+            constructorDeps: $mergedDeps,
+            methods: array_values($byName),
+            useMap: $withMaps->useMap,
+            parent: $withMaps->parent,
+            middlewares: $mergedMw,
+            ancestorFqcns: $ancestorFqcns,
+        );
+    }
+
+    private function withExplicitMethodUseMaps(ControllerDefinition $def): ControllerDefinition
+    {
+        $methods = [];
+        foreach ($def->methods as $m) {
+            $methods[] = $m->ast !== null && $m->methodUseMap === null
+                ? new MethodDefinition(
+                    $m->name,
+                    $m->dependencies,
+                    $m->ast,
+                    $m->visibility,
+                    $def->useMap,
+                    $m->declaringFqcn ?? $def->fqcn,
+                )
+                : $m;
+        }
+
+        return new ControllerDefinition(
+            fqcn: $def->fqcn,
+            file: $def->file,
+            constructorDeps: $def->constructorDeps,
+            methods: $methods,
+            useMap: $def->useMap,
+            parent: $def->parent,
+            middlewares: $def->middlewares,
+            ancestorFqcns: $def->ancestorFqcns,
         );
     }
 

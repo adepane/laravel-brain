@@ -9,8 +9,9 @@ class ContextExporter
     private const CHARS_PER_TOKEN = 4;
 
     private const TYPE_PRIORITY = [
-        'route', 'controller', 'action', 'service',
+        'route', 'controller', 'action', 'validation_request', 'service',
         'model', 'event', 'job', 'command', 'channel', 'schedule', 'middleware',
+        'view', 'mail', 'notification', 'enum', 'interface', 'trait', 'abstract_class',
         'filament_panel', 'filament_resource', 'filament_page', 'filament_widget', 'filament_relation_manager',
     ];
 

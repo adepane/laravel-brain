@@ -101,7 +101,7 @@ class QueryTracer
                                 table: $this->deriveTableName($edge->calleeFqcn),
                                 operation: $edge->calleeMethod,
                             );
-                        } elseif (in_array($edge->type, ['service', 'repository'], true)) {
+                        } elseif (in_array($edge->type, ['service', 'repository', 'mail', 'notification', 'abstract_class'], true)) {
                             $queue[] = $calleeKey;
                         }
                     }

@@ -30,7 +30,7 @@ export interface GraphNodeMetrics {
 
 export interface GraphNode {
   id: string
-  type: 'route' | 'middleware' | 'controller' | 'action' | 'service' | 'model' | 'event' | 'job' | 'command' | 'channel' | 'schedule' | 'filament_panel' | 'filament_resource' | 'filament_page' | 'filament_page_method' | 'filament_widget' | 'filament_relation_manager'
+  type: 'route' | 'middleware' | 'controller' | 'action' | 'service' | 'validation_request' | 'model' | 'event' | 'job' | 'command' | 'channel' | 'schedule' | 'view' | 'mail' | 'notification' | 'enum' | 'interface' | 'trait' | 'abstract_class' | 'service_provider' | 'filament_panel' | 'filament_resource' | 'filament_page' | 'filament_page_method' | 'filament_widget' | 'filament_relation_manager'
   label: string
   data: Record<string, unknown>
 }

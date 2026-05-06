@@ -149,6 +149,7 @@ class RulesExporter
             'Routes' => $tc['route'] ?? 0,
             'Actions' => $tc['action'] ?? 0,
             'Services' => $tc['service'] ?? 0,
+            'Validation requests' => $tc['validation_request'] ?? 0,
             'Models' => $tc['model'] ?? 0,
             'Events' => $tc['event'] ?? 0,
             'Jobs' => $tc['job'] ?? 0,

@@ -5,7 +5,8 @@ import { splitNodeLabel } from './graphLayoutD3'
 // ── Mermaid from full graph data ──────────────────────────────────────────────
 
 const TYPE_ORDER = [
-  'route', 'middleware', 'controller', 'action', 'service', 'repository', 'model', 'job', 'event',
+  'route', 'middleware', 'controller', 'action', 'service', 'validation_request', 'repository', 'model', 'job', 'event',
+  'view', 'mail', 'notification', 'enum', 'interface', 'trait', 'abstract_class', 'service_provider',
   'filament_panel', 'filament_resource', 'filament_page', 'filament_page_method',
   'filament_widget', 'filament_relation_manager',
 ]

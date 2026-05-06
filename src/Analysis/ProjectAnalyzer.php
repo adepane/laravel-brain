@@ -175,9 +175,14 @@ class ProjectAnalyzer
         $dbQueryMap = $this->queryTracer->buildQueryMap($callChain, $controllers, $psr4Map, $projectRoot);
         $this->emit('step:done', ['step' => 'queries', 'count' => count($dbQueryMap), 'unit' => 'action', 'message' => '    Found DB query info for '.count($dbQueryMap).' action(s)']);
 
+        $this->emit('step:start', ['step' => 'container_bindings', 'label' => 'Scanning service providers', 'message' => '  → Scanning service providers (IoC bindings)...']);
+        $bindingRegistry = (new ContainerBindingAnalyzer)->analyze($projectRoot);
+        $bindingCount = count($bindingRegistry->all());
+        $this->emit('step:done', ['step' => 'container_bindings', 'count' => $bindingCount, 'unit' => 'binding', 'message' => "    Found {$bindingCount} container binding(s)"]);
+
         $this->emit('step:start', ['step' => 'graph', 'label' => 'Building graph', 'message' => '  → Building graph...']);
         $fullGraph = $this->graphBuilder->build(
-            $projectName, $routes, $middlewareRegistry, $controllers, $callChain, $models, $projectRoot, $dbQueryMap,
+            $projectName, $routes, $middlewareRegistry, $controllers, $callChain, $models, $projectRoot, $dbQueryMap, $bindingRegistry,
         );
         $this->graphBuilder->addConsoleCommands($commands, $schedules, $commandEdges);
         $this->graphBuilder->addChannels($channels, $channelEdges);
