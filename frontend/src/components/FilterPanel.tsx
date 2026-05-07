@@ -5,6 +5,7 @@ const NODE_TYPES: { type: GraphNode['type']; label: string; color: string; tip: 
   { type: 'route', label: 'Routes', color: '#4CAF50', tip: 'HTTP route entry points (method + URI) into your application.' },
   { type: 'middleware', label: 'Middleware', color: '#FF9800', tip: 'Pipeline classes that wrap requests before they reach controllers.' },
   { type: 'controller', label: 'Controllers', color: '#2196F3', tip: 'Controller classes that orchestrate HTTP requests.' },
+  { type: 'livewire_component', label: 'Livewire Components', color: '#FB7185', tip: 'Livewire components that extend Livewire\\Component.' },
   { type: 'action', label: 'Actions', color: '#03A9F4', tip: 'Controller methods or invokable actions that run for a route.' },
   { type: 'service', label: 'Services', color: '#9C27B0', tip: 'Injected services and domain/helper classes resolved from the container.' },
   { type: 'validation_request', label: 'Validation requests', color: '#0d9488', tip: 'Form request classes that validate and authorize input.' },

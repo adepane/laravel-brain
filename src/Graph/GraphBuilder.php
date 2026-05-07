@@ -1417,6 +1417,23 @@ class GraphBuilder
         $this->graph->addNode(new Node($id, 'route', "{$route->method} {$route->uri}", $nodeData));
     }
 
+    private function isLivewireComponent(?ControllerDefinition $def, string $fqcn): bool
+    {
+        if ($def !== null && $def->parent !== null) {
+            return str_starts_with($def->parent, 'Livewire\\');
+        }
+
+        $file = $this->resolveFile($fqcn);
+        if ($file === '' || ! is_file($file)) {
+            return false;
+        }
+        $contents = file_get_contents($file);
+
+        return $contents !== false
+            && str_contains($contents, 'use Livewire\\')
+            && (bool) preg_match('/extends\s+\w*Component\b/', $contents);
+    }
+
     private function addControllerNode(string $fqcn, ?ControllerDefinition $def, string $id): void
     {
         if ($this->graph->hasNode($id)) {
@@ -1430,7 +1447,9 @@ class GraphBuilder
             $file = $this->resolveFile($fqcn);
         }
 
-        $this->graph->addNode(new Node($id, 'controller', $short, [
+        $type = $this->isLivewireComponent($def, $fqcn) ? 'livewire_component' : 'controller';
+
+        $this->graph->addNode(new Node($id, $type, $short, [
             'fqcn' => $fqcn,
             'file' => $file,
         ]));

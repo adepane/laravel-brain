@@ -116,23 +116,49 @@ function evalPolyline(
  * These mirror the geometry produced by `orthogonalPath` so packets
  * travel along exactly the same route as the drawn SVG edge.
  */
+/**
+ * Pick exit/entry ports for an edge based on actual relative node positions.
+ * Compares the axis-gap between the two nodes and routes along the dominant axis.
+ * This makes edges re-route naturally when nodes are dragged.
+ */
+function pickPorts(
+  ns: LayoutNode,
+  nt: LayoutNode,
+): { ex: number; ey: number; tx: number; ty: number; vertical: boolean } {
+  const cdx = nt.x - ns.x
+  const cdy = nt.y - ns.y
+  // Gap between node bounding boxes on each axis (negative = overlapping)
+  const hGap = Math.abs(cdx) - (ns.width + nt.width) / 2
+  const vGap = Math.abs(cdy) - (ns.height + nt.height) / 2
+  const useVertical = vGap >= hGap
+  if (useVertical) {
+    if (cdy >= 0) {
+      return { ex: ns.x, ey: ns.y + ns.height / 2, tx: nt.x, ty: nt.y - nt.height / 2, vertical: true }
+    } else {
+      return { ex: ns.x, ey: ns.y - ns.height / 2, tx: nt.x, ty: nt.y + nt.height / 2, vertical: true }
+    }
+  } else {
+    if (cdx >= 0) {
+      return { ex: ns.x + ns.width / 2, ey: ns.y, tx: nt.x - nt.width / 2, ty: nt.y, vertical: false }
+    } else {
+      return { ex: ns.x - ns.width / 2, ey: ns.y, tx: nt.x + nt.width / 2, ty: nt.y, vertical: false }
+    }
+  }
+}
+
 function orthogonalWaypoints(
   ns: LayoutNode,
   nt: LayoutNode,
-  rankDir: 'LR' | 'TB',
 ): Array<{ x: number; y: number }> {
-  if (rankDir === 'TB') {
-    const ex = ns.x,  ey = ns.y + ns.height / 2
-    const tx = nt.x,  ty = nt.y - nt.height / 2
-    if (Math.abs(ex - tx) < 3 || ty <= ey + 8) {
+  const { ex, ey, tx, ty, vertical } = pickPorts(ns, nt)
+  if (vertical) {
+    if (Math.abs(ex - tx) < 3 || Math.abs(ty - ey) <= 8) {
       return [{ x: ex, y: ey }, { x: tx, y: ty }]
     }
     const midY = (ey + ty) / 2
     return [{ x: ex, y: ey }, { x: ex, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }]
   } else {
-    const ex = ns.x + ns.width / 2,  ey = ns.y
-    const tx = nt.x - nt.width / 2,  ty = nt.y
-    if (Math.abs(ey - ty) < 3 || tx <= ex + 8) {
+    if (Math.abs(ey - ty) < 3 || Math.abs(tx - ex) <= 8) {
       return [{ x: ex, y: ey }, { x: tx, y: ty }]
     }
     const midX = (ex + tx) / 2
@@ -149,44 +175,39 @@ function clampR(...dists: number[]): number {
 
 /**
  * Build an orthogonal (elbow) SVG path between two nodes.
- * Returns the path `d` string plus `lx/ly` — the best point for an edge label.
- * Exit port: bottom-center (TB) or right-center (LR).
- * Entry port: top-center (TB) or left-center (LR).
+ * Ports are chosen dynamically based on the relative node positions so that
+ * edges re-route correctly when nodes are dragged to a new position.
  */
 function orthogonalPath(
   ns: LayoutNode,
   nt: LayoutNode,
-  rankDir: 'LR' | 'TB',
 ): { d: string; lx: number; ly: number; exitX: number; exitY: number; entryX: number; entryY: number } {
-  if (rankDir === 'TB') {
-    const ex = ns.x,  ey = ns.y + ns.height / 2
-    const tx = nt.x,  ty = nt.y - nt.height / 2
-    // Straight vertical (same column or backward edge)
-    if (Math.abs(ex - tx) < 3 || ty <= ey + 8) {
+  const { ex, ey, tx, ty, vertical } = pickPorts(ns, nt)
+
+  if (vertical) {
+    if (Math.abs(ex - tx) < 3 || Math.abs(ty - ey) <= 8) {
       return { d: `M${ex},${ey} L${tx},${ty}`, lx: ex + 6, ly: (ey + ty) / 2, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
     }
     const midY = (ey + ty) / 2
-    const r = clampR(midY - ey, ty - midY, Math.abs(tx - ex))
+    const dySign = ty > ey ? 1 : -1
+    const r = clampR(Math.abs(midY - ey), Math.abs(ty - midY), Math.abs(tx - ex))
     const sx = tx > ex ? r : -r
     const d = r > 0
-      ? `M${ex},${ey} V${midY - r} Q${ex},${midY} ${ex + sx},${midY} H${tx - sx} Q${tx},${midY} ${tx},${midY + r} V${ty}`
+      ? `M${ex},${ey} V${midY - r * dySign} Q${ex},${midY} ${ex + sx},${midY} H${tx - sx} Q${tx},${midY} ${tx},${midY + r * dySign} V${ty}`
       : `M${ex},${ey} V${midY} H${tx} V${ty}`
-    return { d, lx: (ex + tx) / 2, ly: midY - 14, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
+    return { d, lx: (ex + tx) / 2, ly: midY - 14 * dySign, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
   } else {
-    // LR
-    const ex = ns.x + ns.width / 2,  ey = ns.y
-    const tx = nt.x - nt.width / 2,  ty = nt.y
-    // Straight horizontal (same row or backward edge)
-    if (Math.abs(ey - ty) < 3 || tx <= ex + 8) {
+    if (Math.abs(ey - ty) < 3 || Math.abs(tx - ex) <= 8) {
       return { d: `M${ex},${ey} L${tx},${ty}`, lx: (ex + tx) / 2, ly: ey - 10, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
     }
     const midX = (ex + tx) / 2
-    const r = clampR(midX - ex, tx - midX, Math.abs(ty - ey))
+    const dxSign = tx > ex ? 1 : -1
+    const r = clampR(Math.abs(midX - ex), Math.abs(tx - midX), Math.abs(ty - ey))
     const sy = ty > ey ? r : -r
     const d = r > 0
-      ? `M${ex},${ey} H${midX - r} Q${midX},${ey} ${midX},${ey + sy} V${ty - sy} Q${midX},${ty} ${midX + r},${ty} H${tx}`
+      ? `M${ex},${ey} H${midX - r * dxSign} Q${midX},${ey} ${midX},${ey + sy} V${ty - sy} Q${midX},${ty} ${midX + r * dxSign},${ty} H${tx}`
       : `M${ex},${ey} H${midX} V${ty} H${tx}`
-    return { d, lx: midX + 6, ly: (ey + ty) / 2, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
+    return { d, lx: midX + 6 * dxSign, ly: (ey + ty) / 2, exitX: ex, exitY: ey, entryX: tx, entryY: ty }
   }
 }
 
@@ -343,6 +364,11 @@ export function GraphView({
     () => new Map(effectiveNodes.map((n) => [n.id, n])),
     [effectiveNodes],
   )
+
+  // Keep a ref so packet-spawn callbacks always read the latest dragged positions
+  // without needing effectiveNodeById in their dependency arrays.
+  const effectiveNodeByIdRef = useRef(effectiveNodeById)
+  useEffect(() => { effectiveNodeByIdRef.current = effectiveNodeById }, [effectiveNodeById])
 
   const isTypeVisible = useCallback((type: unknown) => visibleTypes.has(String(type)), [visibleTypes])
 
@@ -533,11 +559,11 @@ export function GraphView({
     (edgeId: string, color: string, delay = 0, chained = false) => {
       const e = edges.find((x) => x.id === edgeId)
       if (!e || !edgeVisible(e)) return
-      const ns = nodeById.get(e.source)
-      const nt = nodeById.get(e.target)
+      const ns = effectiveNodeByIdRef.current.get(e.source)
+      const nt = effectiveNodeByIdRef.current.get(e.target)
       if (!ns || !nt) return
 
-      const waypoints = orthogonalWaypoints(ns, nt, rankDir)
+      const waypoints = orthogonalWaypoints(ns, nt)
 
       // Latency simulation: only for stress-test packets (chained = true)
       const stallAt = chained && Math.random() < 0.65
@@ -566,7 +592,7 @@ export function GraphView({
         })
       }, delay)
     },
-    [edges, nodeById, edgeVisible, rankDir],
+    [edges, edgeVisible, rankDir],
   )
 
   const spawnChainFromNode = useCallback(
@@ -990,7 +1016,7 @@ export function GraphView({
             const ns = effectiveNodeById.get(e.source)
             const nt = effectiveNodeById.get(e.target)
             if (!ns || !nt) return null
-            const { d: dStr, lx, ly } = orthogonalPath(ns, nt, rankDir)
+            const { d: dStr, lx, ly } = orthogonalPath(ns, nt)
             const mid = { x: lx, y: ly }
             const lbl = labelForEdge(e.data, dark)
             const hi = highlightEdgeIds.has(e.id)
