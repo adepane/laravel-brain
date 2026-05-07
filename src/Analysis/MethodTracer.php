@@ -403,6 +403,7 @@ class MethodTracer
                     && $node->var->name === 'this'
                 ) {
                     $this->handleAuthorize($node);
+
                     return;
                 }
 
@@ -635,6 +636,7 @@ class MethodTracer
                     if ($this->looksLikeModel($fqcn)) {
                         $this->hops[] = ['fqcn' => $fqcn, 'method' => $ability, 'type' => 'model', 'visibility' => 'public'];
                     }
+
                     return;
                 }
 
