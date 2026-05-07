@@ -8,14 +8,14 @@ class RulesExporter
 {
     /** @var array<string, array{path: string, label: string}> */
     public const TARGETS = [
-        'claude'  => ['path' => 'CLAUDE.md',                              'label' => 'Claude Code'],
-        'cursor'  => ['path' => '.cursor/rules/laravel-brain.mdc',        'label' => 'Cursor'],
+        'claude' => ['path' => 'CLAUDE.md',                              'label' => 'Claude Code'],
+        'cursor' => ['path' => '.cursor/rules/laravel-brain.mdc',        'label' => 'Cursor'],
         'windsurf' => ['path' => '.windsurf/rules/laravel-brain.md',      'label' => 'Windsurf'],
         'copilot' => ['path' => '.github/copilot-instructions.md',        'label' => 'GitHub Copilot'],
-        'junie'   => ['path' => '.junie/guidelines.md',                   'label' => 'JetBrains Junie'],
-        'aider'   => ['path' => 'CONVENTIONS.md',                         'label' => 'Aider'],
-        'agents'  => ['path' => 'AGENTS.md',                              'label' => 'AGENTS.md (universal)'],
-        'codex'   => ['path' => 'CODEX.md',                               'label' => 'OpenAI Codex'],
+        'junie' => ['path' => '.junie/guidelines.md',                   'label' => 'JetBrains Junie'],
+        'aider' => ['path' => 'CONVENTIONS.md',                         'label' => 'Aider'],
+        'agents' => ['path' => 'AGENTS.md',                              'label' => 'AGENTS.md (universal)'],
+        'codex' => ['path' => 'CODEX.md',                               'label' => 'OpenAI Codex'],
     ];
 
     public function __construct(
@@ -34,15 +34,15 @@ class RulesExporter
         $body = $this->buildBody($data);
 
         return match ($target) {
-            'claude'   => $this->wrapClaude($body, $data),
-            'cursor'   => $this->wrapCursor($body, $data),
+            'claude' => $this->wrapClaude($body, $data),
+            'cursor' => $this->wrapCursor($body, $data),
             'windsurf' => $this->wrapWindsurf($body, $data),
-            'copilot'  => $this->wrapCopilot($body, $data),
-            'junie'    => $this->wrapJunie($body, $data),
-            'aider'    => $this->wrapAider($body, $data),
-            'agents'   => $this->wrapAgents($body, $data),
-            'codex'    => $this->wrapCodex($body, $data),
-            default    => throw new \InvalidArgumentException("Unknown target: {$target}"),
+            'copilot' => $this->wrapCopilot($body, $data),
+            'junie' => $this->wrapJunie($body, $data),
+            'aider' => $this->wrapAider($body, $data),
+            'agents' => $this->wrapAgents($body, $data),
+            'codex' => $this->wrapCodex($body, $data),
+            default => throw new \InvalidArgumentException("Unknown target: {$target}"),
         };
     }
 

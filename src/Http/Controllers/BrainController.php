@@ -138,8 +138,8 @@ class BrainController extends Controller
                 if (file_exists($destPath)) {
                     $existing[] = [
                         'target' => $target,
-                        'label'  => RulesExporter::TARGETS[$target]['label'],
-                        'path'   => str_replace(base_path().'/', '', $destPath),
+                        'label' => RulesExporter::TARGETS[$target]['label'],
+                        'path' => str_replace(base_path().'/', '', $destPath),
                     ];
                 }
             }
@@ -147,7 +147,7 @@ class BrainController extends Controller
             if (! empty($existing)) {
                 return response()->json([
                     'existing' => $existing,
-                    'message'  => count($existing).' file(s) already exist. Pass force=true to overwrite.',
+                    'message' => count($existing).' file(s) already exist. Pass force=true to overwrite.',
                 ], 409);
             }
         }
