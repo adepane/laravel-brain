@@ -12,6 +12,8 @@
   <img src="https://img.shields.io/badge/PHP-8.0%2B-777BB4?style=flat-square&logo=php" alt="PHP"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
   <img src="https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?style=flat-square&logo=github-sponsors" alt="Sponsor"/>
+  <br/><br/>
+  <a href="https://www.buymeacoffee.com/MrMarchOne"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-MrMarchOne-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"/></a>
 </p>
 
 ---
