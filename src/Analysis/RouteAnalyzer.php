@@ -228,6 +228,8 @@ class RouteAnalyzer
                         $this->enterGroupFromStaticCall($node);
                     } elseif (in_array($methodName, ['resource', 'apiResource'], true)) {
                         $this->handleResource($node, $methodName);
+                    } elseif ($methodName === 'livewire') {
+                        $this->handleLivewireRoute($node);
                     }
 
                     return null;
@@ -244,6 +246,8 @@ class RouteAnalyzer
                         $this->handleHttpRoute($node, $methodName);
                     } elseif (in_array($methodName, ['resource', 'apiResource'], true)) {
                         $this->handleResource($node, $methodName);
+                    } elseif ($methodName === 'livewire') {
+                        $this->handleLivewireRoute($node);
                     } elseif (in_array($methodName, self::POST_ROUTE_CHAIN_METHODS, true)) {
                         // Pattern: Route::get(...)->middleware('ability:...') or ->name('...')->middleware('...')
                         // The HTTP route call is below in the AST; collect post-chain middleware and handle it.
@@ -329,6 +333,55 @@ class RouteAnalyzer
                     line: $node->getStartLine(),
                     tabGroup: strtoupper($method).' '.$fullUri,
                     closureNode: $closureNode,
+                );
+            }
+
+            /**
+             * Handles Route::livewire('/uri', ComponentClass::class) — a Livewire v2 macro
+             * that registers a GET route pointing to a Livewire component.
+             */
+            private function handleLivewireRoute(Node\Expr\StaticCall|Node\Expr\MethodCall $node): void
+            {
+                $uri = $this->extractString($node->args[0] ?? null);
+                if ($uri === null) {
+                    return;
+                }
+
+                $componentArg = $node->args[1] ?? null;
+                $controller = '';
+                if ($componentArg !== null) {
+                    $val = $componentArg instanceof Node\Arg ? $componentArg->value : $componentArg;
+                    $controller = $this->extractClassRef($val);
+                    if ($controller === '') {
+                        $controller = $this->extractString($componentArg) ?? '';
+                    }
+                }
+
+                $chainPrefix = '';
+                $chainMiddlewares = [];
+                $chainNamespace = '';
+                if ($node instanceof Node\Expr\MethodCall) {
+                    $this->walkChain($node->var, $chainPrefix, $chainMiddlewares, $chainNamespace);
+                }
+
+                $fullUri = implode('', $this->prefixStack).$chainPrefix.'/'.ltrim($uri, '/');
+                $fullUri = '/'.ltrim($fullUri, '/');
+
+                $middlewares = array_merge(
+                    array_merge(...$this->middlewareStack ?: [[]]),
+                    $chainMiddlewares,
+                );
+
+                $this->routes[] = new RouteDefinition(
+                    method: 'GET',
+                    uri: $fullUri,
+                    controller: $controller,
+                    action: 'render',
+                    middlewares: array_unique($middlewares),
+                    name: '',
+                    file: $this->file,
+                    line: $node->getStartLine(),
+                    tabGroup: 'GET '.$fullUri,
                 );
             }
 

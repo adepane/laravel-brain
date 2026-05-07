@@ -8,6 +8,7 @@ import { StressTestPanel } from './StressTestPanel'
 import { SequenceDiagramView } from './SequenceDiagramView'
 import { SequenceDiagramModal } from './SequenceDiagramModal'
 import { buildSequenceDiagram } from '../utils/sequenceUtils'
+import { Tooltip } from './Tooltip'
 
 const MIN_WIDTH = 200
 const MAX_WIDTH = 640
@@ -163,29 +164,39 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
   if (!selectedId) {
     return (
       <div className="sidebar-resizable" style={{ width }}>
-        <div className="sidebar-drag-handle" onMouseDown={onMouseDown} title="Drag to resize" />
+        <Tooltip content="Drag to resize">
+          <div className="sidebar-drag-handle" onMouseDown={onMouseDown} />
+        </Tooltip>
         <div className="sidebar">
           <div className="sidebar-header">
             <h2>{graphData.meta.project}</h2>
             <span className="sidebar-subtitle">Laravel Lifecycle Graph</span>
           </div>
           <div className="sidebar-stats">
-            <div className="stat">
-              <span className="stat-value">{graphData.meta.nodeCount}</span>
-              <span className="stat-label">Nodes</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">{graphData.meta.edgeCount}</span>
-              <span className="stat-label">Edges</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">
-                {graphData.nodes.filter((n) => n.type === 'route').length}
-              </span>
-              <span className="stat-label">Routes</span>
-            </div>
+            <Tooltip content="Total symbols in this tab's JSON graph (routes, classes, views, …).">
+              <div className="stat">
+                <span className="stat-value">{graphData.meta.nodeCount}</span>
+                <span className="stat-label">Nodes</span>
+              </div>
+            </Tooltip>
+            <Tooltip content="Directed links between nodes: calls, type-hints, events, views, Eloquent relations, etc.">
+              <div className="stat">
+                <span className="stat-value">{graphData.meta.edgeCount}</span>
+                <span className="stat-label">Edges</span>
+              </div>
+            </Tooltip>
+            <Tooltip content="HTTP route entry nodes only (subset of all node types).">
+              <div className="stat">
+                <span className="stat-value">
+                  {graphData.nodes.filter((n) => n.type === 'route').length}
+                </span>
+                <span className="stat-label">Routes</span>
+              </div>
+            </Tooltip>
           </div>
-          <p className="sidebar-hint">Click any node to inspect it</p>
+          <Tooltip content="The inspector shows details for the selected node: metrics, flow, source, and incoming/outgoing edges.">
+            <p className="sidebar-hint">Click any node to inspect it</p>
+          </Tooltip>
         </div>
       </div>
     )
@@ -246,34 +257,48 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
       ? 'info'
       : activeTab
 
-  const tabs: { id: TabId; label: string; count?: number }[] = [
-    { id: 'info', label: 'Info' },
-    ...(hasFlow ? [{ id: 'flow' as TabId, label: 'Flow' }] : []),
-    ...(hasSource ? [{ id: 'source' as TabId, label: 'Source' }] : []),
-    ...(hasEdges ? [{ id: 'edges' as TabId, label: 'Edges', count: incomingEdges.length + outgoingEdges.length }] : []),
-    ...(isRoute ? [{ id: 'stress' as TabId, label: 'Stress' }] : []),
+  const tabs: { id: TabId; label: string; count?: number; title: string }[] = [
+    { id: 'info', label: 'Info', title: 'Identity, type, smells, and code metrics (lines, cyclomatic complexity, …).' },
+    ...(hasFlow ? [{ id: 'flow' as TabId, label: 'Flow', title: 'Control-flow steps through this method or request (and sequence diagram for routes).' }] : []),
+    ...(hasSource ? [{ id: 'source' as TabId, label: 'Source', title: 'Syntax-highlighted PHP source around this symbol.' }] : []),
+    ...(hasEdges ? [{ id: 'edges' as TabId, label: 'Edges', count: incomingEdges.length + outgoingEdges.length, title: 'What calls or references this node (incoming) and what it calls (outgoing).' }] : []),
+    ...(isRoute ? [{ id: 'stress' as TabId, label: 'Stress', title: 'Send HTTP requests against this route and inspect responses (dev only).' }] : []),
   ]
 
   return (
     <div className="sidebar-resizable" style={{ width }}>
-      <div className="sidebar-drag-handle" onMouseDown={onMouseDown} title="Drag to resize" />
+      <Tooltip content="Drag to resize">
+        <div className="sidebar-drag-handle" onMouseDown={onMouseDown} />
+      </Tooltip>
       <div className="sidebar">
 
         {/* Header */}
         <div className="sidebar-header">
           <div className="sidebar-header-actions">
-            <button
-              className="flow-popup-btn sidebar-ai-btn"
-              title="Copy AI context to clipboard"
-              onClick={handleCopyAiContext}
-              disabled={aiLoading}
-            >
-              {aiLoading ? '…' : aiCopied ? '✓' : '🤖'}
-            </button>
-            <button className="sidebar-close" onClick={onClose}>×</button>
+            <Tooltip content="Copy AI context to clipboard">
+              <span className="tooltip-trigger-wrap">
+                <button
+                  type="button"
+                  className="flow-popup-btn sidebar-ai-btn"
+                  onClick={handleCopyAiContext}
+                  disabled={aiLoading}
+                >
+                  {aiLoading ? '…' : aiCopied ? '✓' : '🤖'}
+                </button>
+              </span>
+            </Tooltip>
+            <Tooltip content="Clear selection (close inspector header)">
+              <button className="sidebar-close" type="button" onClick={onClose}>
+                ×
+              </button>
+            </Tooltip>
           </div>
           <div className="sidebar-badges">
-            <span className="type-badge" style={{ backgroundColor: color }}>{node.type}</span>
+            <Tooltip content="Graph node category (route, controller, model, …). Colors match the filter panel.">
+              <span className="type-badge" style={{ backgroundColor: color }}>
+                {node.type}
+              </span>
+            </Tooltip>
             {typeof node.data?.visibility === 'string' && (
               <span className={`visibility-badge visibility-badge--${node.data.visibility}`}>
                 {node.data.visibility === 'public' && '🔓 '}
@@ -290,19 +315,25 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
         {(fatMethod || fatClass || hasN1) && (
           <div className="sidebar-smells">
             {hasN1 && (
-              <span className="smell-badge smell-badge--n1" title="N+1 Query: database query inside a loop">
-                ⚠️ N+1 Query
-              </span>
+              <Tooltip content="N+1 Query: database query inside a loop">
+                <span className="smell-badge smell-badge--n1">
+                  ⚠️ N+1 Query
+                </span>
+              </Tooltip>
             )}
             {fatMethod && (
-              <span className="smell-badge smell-badge--fat-method" title="Fat Method: more than 30 lines or cyclomatic complexity > 10">
-                🧱 Fat Method
-              </span>
+              <Tooltip content="Fat Method: more than 30 lines or cyclomatic complexity > 10">
+                <span className="smell-badge smell-badge--fat-method">
+                  🧱 Fat Method
+                </span>
+              </Tooltip>
             )}
             {fatClass && (
-              <span className="smell-badge smell-badge--fat-class" title="Fat Class: more than 10 methods or 300+ total lines">
-                🏗️ Fat Class
-              </span>
+              <Tooltip content="Fat Class: more than 10 methods or 300+ total lines">
+                <span className="smell-badge smell-badge--fat-class">
+                  🏗️ Fat Class
+                </span>
+              </Tooltip>
             )}
           </div>
         )}
@@ -310,16 +341,18 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
         {/* Tab bar */}
         <div className="sidebar-tab-bar">
           {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              className={`sidebar-tab${safeTab === tab.id ? ' sidebar-tab--active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-              {tab.count !== undefined && (
-                <span className="sidebar-tab-badge">{tab.count}</span>
-              )}
-            </button>
+            <Tooltip key={tab.id} content={tab.title}>
+              <button
+                type="button"
+                className={`sidebar-tab${safeTab === tab.id ? ' sidebar-tab--active' : ''}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+                {tab.count !== undefined && (
+                  <span className="sidebar-tab-badge">{tab.count}</span>
+                )}
+              </button>
+            </Tooltip>
           ))}
         </div>
 
@@ -333,27 +366,35 @@ export function Sidebar({ selectedId, graphData, theme, onClose, onStressChange 
                 <div className="sidebar-section sidebar-section--metrics">
                   <h3>Code Metrics</h3>
                   <div className="metrics-grid">
-                    <div className="metric-item">
-                      <span className="metric-value">{metrics.lineCount}</span>
-                      <span className="metric-label">Lines</span>
-                    </div>
-                    <div className="metric-item">
-                      <span
-                        className="metric-value"
-                        style={{ color: metrics.cyclomaticComplexity > 10 ? '#FF6D00' : 'inherit' }}
-                      >
-                        {metrics.cyclomaticComplexity}
-                      </span>
-                      <span className="metric-label">Complexity</span>
-                    </div>
-                    <div className="metric-item">
-                      <span className="metric-value">{metrics.statementCount}</span>
-                      <span className="metric-label">Statements</span>
-                    </div>
-                    <div className="metric-item">
-                      <span className="metric-value">{metrics.paramCount}</span>
-                      <span className="metric-label">Params</span>
-                    </div>
+                    <Tooltip content="Physical lines of code in this method (approximate, from static analysis).">
+                      <div className="metric-item">
+                        <span className="metric-value">{metrics.lineCount}</span>
+                        <span className="metric-label">Lines</span>
+                      </div>
+                    </Tooltip>
+                    <Tooltip content="Cyclomatic complexity: decision paths (branches, loops, boolean operators). Rough guide: above 10 is harder to test; above 15 is very complex.">
+                      <div className="metric-item">
+                        <span
+                          className="metric-value"
+                          style={{ color: metrics.cyclomaticComplexity > 10 ? '#FF6D00' : 'inherit' }}
+                        >
+                          {metrics.cyclomaticComplexity}
+                        </span>
+                        <span className="metric-label">Complexity</span>
+                      </div>
+                    </Tooltip>
+                    <Tooltip content="Executable statements counted in this method body.">
+                      <div className="metric-item">
+                        <span className="metric-value">{metrics.statementCount}</span>
+                        <span className="metric-label">Statements</span>
+                      </div>
+                    </Tooltip>
+                    <Tooltip content="Parameters on this function or method signature.">
+                      <div className="metric-item">
+                        <span className="metric-value">{metrics.paramCount}</span>
+                        <span className="metric-label">Params</span>
+                      </div>
+                    </Tooltip>
                   </div>
                 </div>
               )}

@@ -150,3 +150,39 @@ PHP
         routeAnalyzerTestDeleteTree($tmp);
     }
 });
+
+it('parses Route::livewire() as a GET route with component as controller', function () {
+    $tmp = sys_get_temp_dir().'/lb-route-analyzer-'.uniqid('', true);
+    mkdir($tmp.'/routes/web', 0777, true);
+    file_put_contents(
+        $tmp.'/routes/web/livewire.php',
+        <<<'PHP'
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Livewire\Dashboard;
+
+Route::livewire('/dashboard', Dashboard::class)->name('dashboard');
+Route::livewire('/profile', 'App\Http\Livewire\Profile');
+PHP
+    );
+
+    try {
+        $routes = (new RouteAnalyzer(['routes/*/*.php']))->analyze($tmp);
+
+        expect($routes)->toHaveCount(2);
+
+        $dashboard = findRoute($routes, fn ($r) => $r->uri === '/dashboard');
+        expect($dashboard)->not->toBeNull();
+        expect($dashboard->method)->toBe('GET');
+        expect($dashboard->controller)->toContain('Dashboard');
+        expect($dashboard->action)->toBe('render');
+
+        $profile = findRoute($routes, fn ($r) => $r->uri === '/profile');
+        expect($profile)->not->toBeNull();
+        expect($profile->method)->toBe('GET');
+        expect($profile->controller)->toBe('App\Http\Livewire\Profile');
+    } finally {
+        routeAnalyzerTestDeleteTree($tmp);
+    }
+});

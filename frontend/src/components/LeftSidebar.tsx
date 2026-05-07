@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useMemo } from 'react'
 import { FilterPanel } from './FilterPanel'
 import { ComplexityPanel } from './ComplexityPanel'
+import { Tooltip } from './Tooltip'
 import type { TabEntry, GraphData } from '../types/graph'
 
 const MIN_WIDTH = 160
@@ -55,18 +56,20 @@ function RouteItem({ tab, isActive, isLoading, onSelect }: {
   const color  = method ? METHOD_COLORS[method] : '#94a3b8'
 
   return (
-    <button
-      className={`left-nav-item ${isActive ? 'left-nav-item--active' : ''}`}
-      onClick={() => onSelect(tab)}
-      title={`${tab.nodeCount} nodes · ${tab.edgeCount} edges`}
-    >
-      {method
-        ? <span className="left-nav-method" style={{ color }}>{method}</span>
-        : <span className="left-nav-method" style={{ color }}>›</span>
-      }
-      <span className="left-nav-uri">{uri}</span>
-      {isLoading && <span className="left-nav-badge">…</span>}
-    </button>
+    <Tooltip content={`Open this lifecycle graph. Nodes: ${tab.nodeCount} (symbols in the graph). Edges: ${tab.edgeCount} (references between them).`}>
+      <button
+        className={`left-nav-item ${isActive ? 'left-nav-item--active' : ''}`}
+        type="button"
+        onClick={() => onSelect(tab)}
+      >
+        {method
+          ? <span className="left-nav-method" style={{ color }}>{method}</span>
+          : <span className="left-nav-method" style={{ color }}>›</span>
+        }
+        <span className="left-nav-uri">{uri}</span>
+        {isLoading && <span className="left-nav-badge">…</span>}
+      </button>
+    </Tooltip>
   )
 }
 
@@ -175,18 +178,24 @@ export function LeftSidebar({
     <div className="left-sidebar-resizable" style={{ width }}>
     <div className="left-sidebar" ref={containerRef}>
       <div className="left-sidebar-tabs">
-        <button
-          className={`left-sidebar-tab ${leftTab === 'routes' ? 'left-sidebar-tab--active' : ''}`}
-          onClick={() => setLeftTab('routes')}
-        >
-          Routes
-        </button>
-        <button
-          className={`left-sidebar-tab ${leftTab === 'complexity' ? 'left-sidebar-tab--active' : ''}`}
-          onClick={() => setLeftTab('complexity')}
-        >
-          Complexity
-        </button>
+        <Tooltip content="Browse routes and commands grouped by file. Selecting one loads its lifecycle graph.">
+          <button
+            type="button"
+            className={`left-sidebar-tab ${leftTab === 'routes' ? 'left-sidebar-tab--active' : ''}`}
+            onClick={() => setLeftTab('routes')}
+          >
+            Routes
+          </button>
+        </Tooltip>
+        <Tooltip content="List methods ranked by cyclomatic complexity for the current graph.">
+          <button
+            type="button"
+            className={`left-sidebar-tab ${leftTab === 'complexity' ? 'left-sidebar-tab--active' : ''}`}
+            onClick={() => setLeftTab('complexity')}
+          >
+            Complexity
+          </button>
+        </Tooltip>
       </div>
 
       <div className="left-sidebar-top" style={{ height: topHeight }}>
@@ -202,15 +211,21 @@ export function LeftSidebar({
         ) : (
         <>
         <div className="left-nav-search">
-          <input
-            className="left-nav-search-input"
-            type="text"
-            placeholder="Search routes…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <Tooltip content="Filter the route list by HTTP method, URI segment, or command name (substring match).">
+            <input
+              className="left-nav-search-input"
+              type="text"
+              placeholder="Search routes…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </Tooltip>
           {search && (
-            <button className="left-nav-search-clear" onClick={() => setSearch('')}>×</button>
+            <Tooltip content="Clear route search">
+              <button type="button" className="left-nav-search-clear" onClick={() => setSearch('')}>
+                ×
+              </button>
+            </Tooltip>
           )}
         </div>
         <div className="left-nav">
@@ -219,21 +234,23 @@ export function LeftSidebar({
             const totalRoutes = fg.prefixGroups.reduce((s, pg) => s + pg.tabs.length, 0)
             return (
               <div key={fg.fileName} className="left-nav-file-group">
-                <button
-                  className="left-nav-file-header"
-                  onClick={() => toggleFile(fg.fileName)}
-                  title={fg.fileName}
-                >
-                  <span className="left-nav-file-chevron">{fileOpen ? '▾' : '▸'}</span>
-                  <span className="left-nav-file-icon">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                  </span>
-                  <span className="left-nav-file-name">{fg.fileName}</span>
-                  <span className="left-nav-file-count">{totalRoutes}</span>
-                </button>
+                <Tooltip content={`Route definitions from ${fg.fileName}. Expand to see URI groups and endpoints.`}>
+                  <button
+                    type="button"
+                    className="left-nav-file-header"
+                    onClick={() => toggleFile(fg.fileName)}
+                  >
+                    <span className="left-nav-file-chevron">{fileOpen ? '▾' : '▸'}</span>
+                    <span className="left-nav-file-icon">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                      </svg>
+                    </span>
+                    <span className="left-nav-file-name">{fg.fileName}</span>
+                    <span className="left-nav-file-count">{totalRoutes}</span>
+                  </button>
+                </Tooltip>
 
                 {fileOpen && fg.prefixGroups.map((pg) => {
                   // '_flat' = non-HTTP tabs (commands/channels): no prefix wrapper
@@ -254,19 +271,22 @@ export function LeftSidebar({
 
                   return (
                     <div key={pg.prefix} className="left-nav-prefix-group">
-                      <button
-                        className="left-nav-prefix-header"
-                        onClick={() => togglePrefix(prefixKey)}
-                      >
-                        <span className="left-nav-prefix-chevron">{prefixOpen ? '▾' : '▸'}</span>
-                        <span className="left-nav-prefix-icon">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                          </svg>
-                        </span>
-                        <span className="left-nav-prefix-name">/{pg.prefix}</span>
-                        <span className="left-nav-prefix-count">{pg.tabs.length}</span>
-                      </button>
+                      <Tooltip content={`URL segment /${pg.prefix} — routes that share this path prefix.`}>
+                        <button
+                          type="button"
+                          className="left-nav-prefix-header"
+                          onClick={() => togglePrefix(prefixKey)}
+                        >
+                          <span className="left-nav-prefix-chevron">{prefixOpen ? '▾' : '▸'}</span>
+                          <span className="left-nav-prefix-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                            </svg>
+                          </span>
+                          <span className="left-nav-prefix-name">/{pg.prefix}</span>
+                          <span className="left-nav-prefix-count">{pg.tabs.length}</span>
+                        </button>
+                      </Tooltip>
 
                       {prefixOpen && pg.tabs.map((tab) => (
                         <RouteItem
@@ -300,7 +320,9 @@ export function LeftSidebar({
         />
       </div>
     </div>
-    <div className="left-sidebar-drag-handle" onMouseDown={onWidthMouseDown} title="Drag to resize" />
+    <Tooltip content="Drag to resize">
+      <div className="left-sidebar-drag-handle" onMouseDown={onWidthMouseDown} />
+    </Tooltip>
     </div>
   )
 }

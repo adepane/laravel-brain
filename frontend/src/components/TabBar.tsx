@@ -1,4 +1,5 @@
 import type { TabEntry } from '../types/graph'
+import { Tooltip } from './Tooltip'
 
 interface TabGroup {
   name: string
@@ -17,23 +18,28 @@ export function TabBar({ groups, activeId, loadingId, onSelect }: Props) {
     <div className="tab-bar">
       {groups.map((group) => (
         <div key={group.name} className="tab-group">
-          <div className="tab-group-header">{group.name}</div>
+          <Tooltip content="Grouped route files or categories from your project manifest.">
+            <div className="tab-group-header">
+              {group.name}
+            </div>
+          </Tooltip>
           <div className="tab-group-content">
             {group.list.map((tab) => {
               const isActive = tab.id === activeId
               const isLoading = tab.id === loadingId
               return (
-                <button
-                  key={tab.id}
-                  className={`tab-item ${isActive ? 'tab-item--active' : ''}`}
-                  onClick={() => onSelect(tab)}
-                  title={`${tab.nodeCount} nodes · ${tab.edgeCount} edges`}
-                >
-                  <span className="tab-label">{tab.label}</span>
-                  <span className="tab-badge">
-                    {isLoading ? '…' : tab.routeCount}
-                  </span>
-                </button>
+                <Tooltip key={tab.id} content={`Open lifecycle for ${tab.label}. Graph: ${tab.nodeCount} nodes, ${tab.edgeCount} edges. Badge: ${tab.routeCount} route(s).`}>
+                  <button
+                    type="button"
+                    className={`tab-item ${isActive ? 'tab-item--active' : ''}`}
+                    onClick={() => onSelect(tab)}
+                  >
+                    <span className="tab-label">{tab.label}</span>
+                    <span className="tab-badge">
+                      {isLoading ? '…' : tab.routeCount}
+                    </span>
+                  </button>
+                </Tooltip>
               )
             })}
           </div>

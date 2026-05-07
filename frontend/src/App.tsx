@@ -9,6 +9,7 @@ import { Sidebar } from './components/Sidebar'
 import { Toolbar } from './components/Toolbar'
 import { LeftSidebar } from './components/LeftSidebar'
 import type { GraphNode, TabEntry } from './types/graph'
+import { Tooltip } from './components/Tooltip'
 import './App.css'
 
 const ALL_TYPES: GraphNode['type'][] = [
@@ -325,28 +326,32 @@ export default function App() {
             </div>
           )}
           {!activeTab && !tabState.loading && (
-            <div className="graph-placeholder">
-              <div className="placeholder-icon">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                </svg>
+            <Tooltip content="Pick a route or command in the left sidebar to load its dependency graph.">
+              <div className="graph-placeholder">
+                <div className="placeholder-icon">
+                  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                  </svg>
+                </div>
+                <h3>Select a route to explore</h3>
+                <p>Expand the files in the sidebar and choose a route or command to visualize its execution lifecycle and dependencies.</p>
               </div>
-              <h3>Select a route to explore</h3>
-              <p>Expand the files in the sidebar and choose a route or command to visualize its execution lifecycle and dependencies.</p>
-            </div>
+            </Tooltip>
           )}
           {!tabState.loading && activeTab && elements.length === 0 && !tabState.error && (
-             <div className="graph-placeholder">
-               <div className="placeholder-icon">
-                 <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                   <circle cx="12" cy="12" r="10" />
-                   <line x1="12" y1="8" x2="12" y2="12" />
-                   <line x1="12" y1="16" x2="12.01" y2="16" />
-                 </svg>
-               </div>
-               <h3>Empty Graph</h3>
-               <p>No nodes or edges found for this route.</p>
-             </div>
+            <Tooltip content="This endpoint produced no analyzable nodes. It may be a closure, a redirect-only route, or outside the scanner’s rules.">
+              <div className="graph-placeholder">
+                <div className="placeholder-icon">
+                  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <h3>Empty Graph</h3>
+                <p>No nodes or edges found for this route.</p>
+              </div>
+            </Tooltip>
           )}
           {!tabState.loading && elements.length > 0 && (
             <GraphView

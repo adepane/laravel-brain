@@ -447,7 +447,8 @@ class ControllerAnalyzer
             return $withMaps;
         }
         if (str_starts_with($withMaps->parent, 'Illuminate\\')
-            || str_starts_with($withMaps->parent, 'Laravel\\')) {
+            || str_starts_with($withMaps->parent, 'Laravel\\')
+            || str_starts_with($withMaps->parent, 'Livewire\\')) {
             return $withMaps;
         }
         if (isset($visited[$withMaps->fqcn])) {

@@ -776,7 +776,9 @@ class GraphBuilder
 
     private function isController(string $fqcn): bool
     {
-        return str_contains($fqcn, 'Controller') || str_contains($fqcn, '\\Http\\');
+        return str_contains($fqcn, 'Controller')
+            || str_contains($fqcn, '\\Http\\')
+            || str_contains($fqcn, '\\Livewire\\');
     }
 
     private function classifyFqcn(string $fqcn): string
