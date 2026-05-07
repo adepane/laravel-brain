@@ -71,7 +71,13 @@ export default function App() {
   if (tabState.data !== prevTabData) {
     setPrevTabData(tabState.data)
     if (tabState.data) {
-      const defaultVisible = new Set(['route', 'controller', 'action', 'view', 'validation_request'] as GraphNode['type'][])
+      const hasFilament = tabState.data.nodes.some((n) => n.type.startsWith('filament_'))
+      const defaultVisible = new Set([
+        'route', 'controller', 'action', 'view', 'validation_request',
+        ...(hasFilament
+          ? (['filament_resource', 'filament_page', 'filament_page_method', 'model'] as GraphNode['type'][])
+          : []),
+      ] as GraphNode['type'][])
       setVisibleTypes(defaultVisible)
     }
     setSelectedId(null)

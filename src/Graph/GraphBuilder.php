@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LaraMint\LaravelBrain\Graph;
 
+use Illuminate\Support\Str;
 use LaraMint\LaravelBrain\Analysis\CallChainEdge;
 use LaraMint\LaravelBrain\Analysis\ChannelDefinition;
 use LaraMint\LaravelBrain\Analysis\ConsoleCommandDefinition;
@@ -1307,7 +1308,39 @@ class GraphBuilder
         if ($root === '') {
             return null;
         }
-        $rel = str_replace('.', '/', $viewDot).'.blade.php';
+
+        $bladeRel = static fn (string $dotted): string => str_replace('.', '/', $dotted).'.blade.php';
+
+        if (str_contains($viewDot, '::')) {
+            [$hint, $path] = explode('::', $viewDot, 2);
+            if ($path === '') {
+                return null;
+            }
+            $rel = $bladeRel($path);
+            $moduleStudly = Str::studly($hint);
+
+            $namespacedCandidates = [
+                $root.'/Modules/'.$moduleStudly.'/resources/views/'.$rel,
+                $root.'/resources/views/vendor/'.$hint.'/'.$rel,
+            ];
+
+            foreach ($namespacedCandidates as $candidate) {
+                if (is_file($candidate)) {
+                    return $candidate;
+                }
+            }
+
+            $pattern = $root.'/Modules/*/resources/views/'.$rel;
+            foreach (glob($pattern) ?: [] as $match) {
+                if (is_file($match)) {
+                    return $match;
+                }
+            }
+
+            return null;
+        }
+
+        $rel = $bladeRel($viewDot);
         $candidates = [
             $root.'/resources/views/'.$rel,
             $root.'/resources/views/vendor/'.$rel,
@@ -1381,46 +1414,11 @@ class GraphBuilder
         if ($file === '') {
             $file = $this->resolveFile($fqcn);
         }
-        $data = [
+
+        $this->graph->addNode(new Node($id, 'controller', $short, [
             'fqcn' => $fqcn,
             'file' => $file,
-        ];
-
-        $members = [];
-        if ($def !== null && $def->fqcn === $fqcn) {
-            foreach ($def->methods as $m) {
-                if (str_starts_with($m->name, '__')) {
-                    continue;
-                }
-                $decl = $m->declaringFqcn ?? $def->fqcn;
-                $row = [
-                    'kind' => 'method',
-                    'name' => $m->name,
-                    'visibility' => $m->visibility,
-                ];
-                if ($m->ast !== null && $m->ast->isStatic()) {
-                    $row['static'] = true;
-                }
-                if ($decl !== $fqcn) {
-                    $row['declaringClass'] = class_basename($decl);
-                }
-                $members[] = $row;
-            }
-        } elseif ($file !== '' && is_file($file)) {
-            foreach ($this->getStructureInspector()->listClassMethods($file) as $row) {
-                $members[] = [
-                    'kind' => 'method',
-                    'name' => $row['name'],
-                    'visibility' => $row['visibility'],
-                    ...($row['static'] ? ['static' => true] : []),
-                ];
-            }
-        }
-        if ($members !== []) {
-            $data['members'] = $members;
-        }
-
-        $this->graph->addNode(new Node($id, 'controller', $short, $data));
+        ]));
     }
 
     /**
@@ -2119,6 +2117,18 @@ class GraphBuilder
             // Resource → Page
             foreach ($resource->pages as $pageKey => $pageFqcn) {
                 $this->addEdge($resourceId, $this->filamentPageId($pageFqcn), 'has page', 'filament-resource-to-page');
+            }
+            // Route → Page (direct: each page-specific route points straight to its page)
+            foreach ($resource->pageRoutes as $pageKey => [$method, $path]) {
+                $pageFqcn = $resource->pages[$pageKey] ?? null;
+                if ($pageFqcn !== null) {
+                    $this->addEdge(
+                        "route::{$method}::{$path}",
+                        $this->filamentPageId($pageFqcn),
+                        'handled by',
+                        'filament-route-to-page',
+                    );
+                }
             }
             // Resource → Relation Manager
             foreach ($resource->relations as $rmFqcn) {

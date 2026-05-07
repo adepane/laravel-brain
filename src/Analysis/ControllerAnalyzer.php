@@ -551,6 +551,46 @@ class ControllerAnalyzer
             }
         }
 
+        // Scan nwidart/laravel-modules: each Modules/{Name}/composer.json may declare its own PSR-4 map.
+        // Also infer the conventional mapping Modules\{Name} → Modules/{Name}/ for older module structures.
+        $modulesDir = $projectRoot.'/Modules';
+        if (is_dir($modulesDir)) {
+            foreach (scandir($modulesDir) as $modName) {
+                if ($modName === '.' || $modName === '..') {
+                    continue;
+                }
+                $modPath = $modulesDir.'/'.$modName;
+                if (! is_dir($modPath)) {
+                    continue;
+                }
+
+                // Read module's own composer.json for explicit PSR-4 entries
+                $modComposer = $modPath.'/composer.json';
+                if (file_exists($modComposer)) {
+                    $modData = json_decode(file_get_contents($modComposer), true);
+                    foreach (['autoload', 'autoload-dev'] as $section) {
+                        foreach ($modData[$section]['psr-4'] ?? [] as $namespace => $path) {
+                            $ns = rtrim($namespace, '\\');
+                            // Resolve path relative to module root
+                            $map[$ns] = rtrim($modPath.'/'.$path, '/');
+                        }
+                    }
+                }
+
+                // Conventional fallback: Modules\{Name} → Modules/{Name}/
+                // Covers both old structure (Http/ directly) and new structure (app/)
+                $ns = 'Modules\\'.$modName;
+                if (! isset($map[$ns])) {
+                    // New nwidart structure: Modules/{Name}/app/
+                    if (is_dir($modPath.'/app')) {
+                        $map[$ns] = $modPath.'/app';
+                    } else {
+                        $map[$ns] = $modPath;
+                    }
+                }
+            }
+        }
+
         return $map;
     }
 
@@ -561,7 +601,9 @@ class ControllerAnalyzer
                 $relative = substr($fqcn, strlen($namespace) + 1);
                 $filePath = $basePath.'/'.str_replace('\\', '/', $relative).'.php';
 
-                return $filePath;
+                if (file_exists($filePath)) {
+                    return $filePath;
+                }
             }
         }
 
@@ -574,7 +616,7 @@ class ControllerAnalyzer
             }
         }
 
-        // Last resort: search by short class name inside app/ and src/
+        // Last resort: search by short class name inside app/, src/, and Modules/
         return $this->searchByClassName($fqcn, $projectRoot);
     }
 
@@ -586,7 +628,15 @@ class ControllerAnalyzer
 
         $filename = $shortName.'.php';
 
-        foreach (['app', 'src'] as $dir) {
+        $searchDirs = ['app', 'src'];
+
+        // Also search Modules/ for nwidart-style module controllers
+        $modulesDir = $projectRoot.'/Modules';
+        if (is_dir($modulesDir)) {
+            $searchDirs[] = 'Modules';
+        }
+
+        foreach ($searchDirs as $dir) {
             $base = $projectRoot.'/'.$dir;
             if (! is_dir($base)) {
                 continue;

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LaraMint\LaravelBrain\Analysis;
 
+use Illuminate\Support\Str;
 use LaraMint\LaravelBrain\Parser\PhpFileParser;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
@@ -119,6 +120,52 @@ class RouteAnalyzer
     }
 
     /**
+     * Path for one expanded {@see ResourceRegistrar} action.
+     *
+     * @internal
+     */
+    public function resourceUriForAction(string $prefixedBaseUri, string $wildcard, string $actionMethod): string
+    {
+        $base = rtrim($prefixedBaseUri, '/');
+        $param = '{'.$wildcard.'}';
+
+        return match ($actionMethod) {
+            'index' => $base,
+            'create' => $base.'/create',
+            'store' => $base,
+            'show', 'update', 'destroy' => $base.'/'.$param,
+            'edit' => $base.'/'.$param.'/edit',
+            default => $base,
+        };
+    }
+
+    /**
+     * Mirrors {@see ResourceRegistrar::getResourceWildcard()}.
+     *
+     * @internal
+     */
+    public function resourceRouteWildcard(string $value): string
+    {
+        if (str_contains($value, '.')) {
+            $segments = explode('.', $value);
+            $value = end($segments) ?: $value;
+        }
+        if (str_contains($value, '/')) {
+            $segments = explode('/', $value);
+            $value = end($segments) ?: $value;
+        }
+        $value = str_replace(['{', '}'], '', $value);
+        if ($value === '') {
+            return 'id';
+        }
+        if (str_contains($value, '-')) {
+            $value = Str::camel($value);
+        }
+
+        return Str::camel(Str::singular($value));
+    }
+
+    /**
      * @param  Node\Stmt[]  $ast
      * @param  array<string, string>  $useMap
      * @return RouteDefinition[]
@@ -128,7 +175,7 @@ class RouteAnalyzer
         $routes = [];
         $traverser = new NodeTraverser;
 
-        $visitor = new class($useMap, $file) extends NodeVisitorAbstract
+        $visitor = new class($useMap, $file, $this) extends NodeVisitorAbstract
         {
             public array $routes = [];
 
@@ -142,6 +189,8 @@ class RouteAnalyzer
 
             private string $file;
 
+            private RouteAnalyzer $routeAnalyzer;
+
             private const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'options', 'any'];
 
             /**
@@ -152,10 +201,11 @@ class RouteAnalyzer
              */
             private const POST_ROUTE_CHAIN_METHODS = ['middleware', 'withoutMiddleware', 'name', 'where', 'defaults', 'scopeBindings', 'withTrashed', 'missing', 'can'];
 
-            public function __construct(array $useMap, string $file)
+            public function __construct(array $useMap, string $file, RouteAnalyzer $routeAnalyzer)
             {
                 $this->useMap = $useMap;
                 $this->file = $file;
+                $this->routeAnalyzer = $routeAnalyzer;
             }
 
             public function enterNode(Node $node): ?int
@@ -368,21 +418,23 @@ class RouteAnalyzer
                 );
 
                 $methods = $type === 'apiResource'
-                    ? ['GET:index', 'POST:store', 'GET:show', 'PUT:update', 'DELETE:destroy']
-                    : ['GET:index', 'GET:create', 'POST:store', 'GET:show', 'GET:edit', 'PUT:update', 'DELETE:destroy'];
+                    ? ['GET:index', 'POST:store', 'GET:show', 'PUT:update', 'PATCH:update', 'DELETE:destroy']
+                    : ['GET:index', 'GET:create', 'POST:store', 'GET:show', 'GET:edit', 'PUT:update', 'PATCH:update', 'DELETE:destroy'];
 
+                $wildcard = $this->routeAnalyzer->resourceRouteWildcard($uri);
                 foreach ($methods as $spec) {
                     [$httpMethod, $actionMethod] = explode(':', $spec);
+                    $routeUri = $this->routeAnalyzer->resourceUriForAction($fullUri, $wildcard, $actionMethod);
                     $this->routes[] = new RouteDefinition(
                         method: $httpMethod,
-                        uri: $fullUri,
+                        uri: $routeUri,
                         controller: $controllerFqcn,
                         action: $actionMethod,
                         middlewares: array_unique($middlewares),
                         name: '',
                         file: $this->file,
                         line: $node->getStartLine(),
-                        tabGroup: $httpMethod.' '.$fullUri,
+                        tabGroup: $httpMethod.' '.$routeUri,
                     );
                 }
             }

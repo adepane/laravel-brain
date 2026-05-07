@@ -397,6 +397,15 @@ class MethodTracer
                     return;
                 }
 
+                // $this->authorize('ability', Model::class) or $this->authorize('ability', $model)
+                if ($method === 'authorize'
+                    && $node->var instanceof Node\Expr\Variable
+                    && $node->var->name === 'this'
+                ) {
+                    $this->handleAuthorize($node);
+                    return;
+                }
+
                 if ($method === 'view' && ! empty($node->args)) {
                     $vn = $this->extractViewName($node->args[0] ?? null);
                     if ($vn !== null) {
@@ -594,6 +603,50 @@ class MethodTracer
                 ];
             }
 
+            /**
+             * Extract the model FQCN from $this->authorize('ability', Model::class|$model).
+             * Emits a 'model' hop so the policy target appears in the graph.
+             */
+            private function handleAuthorize(Node\Expr\MethodCall $node): void
+            {
+                $abilityArg = $node->args[0] ?? null;
+                $ability = 'authorize';
+                if ($abilityArg) {
+                    $av = $abilityArg instanceof Node\Arg ? $abilityArg->value : $abilityArg;
+                    if ($av instanceof Node\Scalar\String_) {
+                        $ability = $av->value;
+                    }
+                }
+
+                $modelArg = $node->args[1] ?? null;
+                if ($modelArg === null) {
+                    return;
+                }
+                $val = $modelArg instanceof Node\Arg ? $modelArg->value : $modelArg;
+
+                // Model::class form
+                if ($val instanceof Node\Expr\ClassConstFetch
+                    && $val->class instanceof Node\Name
+                    && $val->name instanceof Node\Identifier
+                    && $val->name->toString() === 'class'
+                ) {
+                    $short = $val->class->toString();
+                    $fqcn = $this->useMap[$short] ?? $short;
+                    if ($this->looksLikeModel($fqcn)) {
+                        $this->hops[] = ['fqcn' => $fqcn, 'method' => $ability, 'type' => 'model', 'visibility' => 'public'];
+                    }
+                    return;
+                }
+
+                // $model variable form
+                if ($val instanceof Node\Expr\Variable && is_string($val->name)) {
+                    $fqcn = $this->varTypeMap[$val->name] ?? null;
+                    if ($fqcn !== null && $this->looksLikeModel($fqcn)) {
+                        $this->hops[] = ['fqcn' => $fqcn, 'method' => $ability, 'type' => 'model', 'visibility' => 'public'];
+                    }
+                }
+            }
+
             private function extractViewName(?Node $node): ?string
             {
                 if ($node === null) {
@@ -660,6 +713,10 @@ class MethodTracer
 
             private function looksLikeModel(string $class): bool
             {
+                // Covers App\Models\, Modules\Blog\Models\, any \Models\ or \Model\ segment
+                if (str_contains($class, '\\Models\\') || str_contains($class, '\\Model\\')) {
+                    return true;
+                }
                 foreach (self::MODEL_NAMESPACES as $ns) {
                     if (str_starts_with($class, $ns)) {
                         return true;
