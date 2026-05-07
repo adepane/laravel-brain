@@ -12,6 +12,9 @@ class Graph
     /** @var array<string, Edge> */
     private array $edges = [];
 
+    /** @var array<string, true> "source|target" index for O(1) directed-edge lookups */
+    private array $directedEdgeIndex = [];
+
     private array $meta = [];
 
     public function addNode(Node $node): void
@@ -44,6 +47,12 @@ class Graph
     public function addEdge(Edge $edge): void
     {
         $this->edges[$edge->id] = $edge;
+        $this->directedEdgeIndex[$edge->source.'|'.$edge->target] = true;
+    }
+
+    public function hasDirectedEdge(string $source, string $target): bool
+    {
+        return isset($this->directedEdgeIndex[$source.'|'.$target]);
     }
 
     public function hasEdge(string $id): bool

@@ -975,6 +975,15 @@ class MethodTracer
         return $requested;
     }
 
+    /**
+     * Release the class-info cache to free ClassMethod AST nodes from memory.
+     * Call this after all tracing is done and before the graph-building phase.
+     */
+    public function releaseClassCache(): void
+    {
+        $this->classCache = [];
+    }
+
     public function looksLikeMail(string $class): bool
     {
         return str_contains($class, '\\Mail\\')

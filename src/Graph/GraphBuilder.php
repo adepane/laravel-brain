@@ -45,7 +45,13 @@ class GraphBuilder
 
     private array $psr4Map = [];
 
-    /** @var array<string, array> file path => parsed result cache */
+    /**
+     * Maximum number of parsed file ASTs to keep in memory at once.
+     * Oldest entries are evicted when the limit is reached to prevent OOM on large codebases.
+     */
+    private const PARSE_CACHE_MAX = 200;
+
+    /** @var array<string, array> file path => parsed result cache (bounded, insertion-ordered) */
     private array $parseCache = [];
 
     /**
@@ -230,6 +236,16 @@ class GraphBuilder
         }
 
         if (! isset($this->parseCache[$file])) {
+            if (count($this->parseCache) >= self::PARSE_CACHE_MAX) {
+                // Evict the oldest quarter of entries to avoid repeated single evictions
+                $evictCount = (int) (self::PARSE_CACHE_MAX / 4);
+                foreach (array_keys($this->parseCache) as $k) {
+                    unset($this->parseCache[$k]);
+                    if (--$evictCount <= 0) {
+                        break;
+                    }
+                }
+            }
             $this->parseCache[$file] = $this->parser->parse($file);
         }
         $parsed = $this->parseCache[$file];
@@ -436,6 +452,9 @@ class GraphBuilder
 
         $this->supplementEnumAndInterfaceNodes($controllers, $callChain);
         $this->wireControllerInterfaceHints($routes, $controllers);
+
+        // Free the two largest inputs — no longer needed for the remaining passes.
+        unset($callChain, $routes);
 
         // ── 3. Model-to-model relationships and model-fired events ───────────
 
@@ -1242,13 +1261,7 @@ class GraphBuilder
 
     private function hasDirectedEdge(string $source, string $target): bool
     {
-        foreach ($this->graph->edges() as $edge) {
-            if ($edge->source === $source && $edge->target === $target) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->graph->hasDirectedEdge($source, $target);
     }
 
     private function isFrameworkDependencyFqcn(string $fqcn): bool
@@ -1545,6 +1558,15 @@ class GraphBuilder
         }
 
         if (! isset($this->parseCache[$file])) {
+            if (count($this->parseCache) >= self::PARSE_CACHE_MAX) {
+                $evictCount = (int) (self::PARSE_CACHE_MAX / 4);
+                foreach (array_keys($this->parseCache) as $k) {
+                    unset($this->parseCache[$k]);
+                    if (--$evictCount <= 0) {
+                        break;
+                    }
+                }
+            }
             $this->parseCache[$file] = $this->parser->parse($file);
         }
         $parsed = $this->parseCache[$file];

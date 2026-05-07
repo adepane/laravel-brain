@@ -119,11 +119,6 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
   const currentKey = `${method}::${uri}`
   const uriParams = extractParams(uri)
 
-  const [open, setOpen] = useState(() => {
-    const c = loadCache(currentKey)
-    return !!(c?.result || c?.error || c?.jobId)
-  })
-
   // Todo 1: derive base URL from the /_laravel-brain URL path so subdirectory
   // installs (e.g. http://myapp.test/sub/_laravel-brain) also work correctly.
   const [baseUrl, setBaseUrl] = useState(() => {
@@ -363,20 +358,13 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
 
   return (
     <div className="st-section sidebar-section">
-      <div className="st-toggle" onClick={() => setOpen((o) => !o)}>
+      <div className="st-toggle">
         <h3>Stress Test</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {lastRunLabel && !open && (
-            <span className="st-last-run">{lastRunLabel}</span>
-          )}
-          <span className="st-toggle-icon">{open ? '▲' : '▼'}</span>
-        </div>
       </div>
 
-      {open && (
-        <div className="st-body">
+      <div className="st-body">
 
-          <div className="st-form">
+        <div className="st-form">
             <div className="st-form-row">
               <span className="st-label">Base URL</span>
               <input
@@ -519,7 +507,6 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
             {lastRunLabel && (
               <span className="st-last-run st-last-run--form">Last run: {lastRunLabel}</span>
             )}
-          </div>
 
           {error && (
             <div className="st-error-box">
@@ -571,7 +558,7 @@ export function StressTestPanel({ method, uri, selectedId, onStressChange }: Pro
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

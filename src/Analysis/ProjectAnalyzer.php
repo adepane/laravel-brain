@@ -196,6 +196,12 @@ class ProjectAnalyzer
         $facadeCount = count($facadeRegistry->all());
         $this->emit('step:done', ['step' => 'facades', 'count' => $facadeCount, 'unit' => 'facade', 'message' => "    Found {$facadeCount} facade(s)"]);
 
+        // Release the ClassMethod AST cache accumulated during tracing — GraphBuilder has its own
+        // parse cache and does not need MethodTracer's cached nodes. Freeing this before the
+        // graph-building phase can reclaim hundreds of MB on large codebases.
+        $this->methodTracer->releaseClassCache();
+        gc_collect_cycles();
+
         $this->emit('step:start', ['step' => 'graph', 'label' => 'Building graph', 'message' => '  → Building graph...']);
         $fullGraph = $this->graphBuilder->build(
             $projectName, $routes, $middlewareRegistry, $controllers, $callChain, $models, $projectRoot, $dbQueryMap, $bindingRegistry, $facadeRegistry,
