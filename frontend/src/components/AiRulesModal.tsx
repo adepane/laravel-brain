@@ -16,6 +16,7 @@ const TARGETS: Target[] = [
   { id: 'junie',    label: 'JetBrains Junie',   path: '.junie/guidelines.md',             icon: '🧠', description: 'JetBrains AI assistant' },
   { id: 'aider',    label: 'Aider',             path: 'CONVENTIONS.md',                   icon: '⌨️', description: 'Load with: aider --read CONVENTIONS.md' },
   { id: 'agents',   label: 'AGENTS.md',         path: 'AGENTS.md',                        icon: '🌐', description: 'Universal open standard — 60+ tools' },
+  { id: 'codex',    label: 'OpenAI Codex',      path: 'CODEX.md',                         icon: '🟢', description: 'Load with: codex --context CODEX.md' },
 ]
 
 type Status = 'idle' | 'generating' | 'success' | 'error'
@@ -26,6 +27,12 @@ interface TargetStatus {
   error?: string
 }
 
+interface ExistingFile {
+  target: string
+  label: string
+  path: string
+}
+
 interface Props {
   onClose: () => void
 }
@@ -34,6 +41,7 @@ export function AiRulesModal({ onClose }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set(TARGETS.map(t => t.id)))
   const [statuses, setStatuses] = useState<Record<string, TargetStatus>>({})
   const [generating, setGenerating] = useState(false)
+  const [existingFiles, setExistingFiles] = useState<ExistingFile[] | null>(null)
 
   const toggleTarget = useCallback((id: string) => {
     setSelected(prev => {
@@ -47,11 +55,10 @@ export function AiRulesModal({ onClose }: Props) {
   const selectAll  = useCallback(() => setSelected(new Set(TARGETS.map(t => t.id))), [])
   const selectNone = useCallback(() => setSelected(new Set()), [])
 
-  const handleGenerate = useCallback(async () => {
-    if (selected.size === 0) return
+  const doGenerate = useCallback(async (force: boolean) => {
     setGenerating(true)
+    setExistingFiles(null)
 
-    // Set all selected to 'generating'
     const initial: Record<string, TargetStatus> = {}
     selected.forEach(id => { initial[id] = { status: 'generating' } })
     setStatuses(initial)
@@ -60,10 +67,19 @@ export function AiRulesModal({ onClose }: Props) {
       const res = await fetch(import.meta.env.BASE_URL + 'api/generate-rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targets: [...selected] }),
+        body: JSON.stringify({ targets: [...selected], force }),
       })
 
       const data = await res.json()
+
+      if (res.status === 409 && data.existing) {
+        // Some files already exist — ask user to confirm overwrite
+        setExistingFiles(data.existing)
+        const reset: Record<string, TargetStatus> = {}
+        selected.forEach(id => { reset[id] = { status: 'idle' } })
+        setStatuses(reset)
+        return
+      }
 
       if (!res.ok) {
         const errMsg = data.error ?? 'Generation failed'
@@ -89,6 +105,10 @@ export function AiRulesModal({ onClose }: Props) {
     }
   }, [selected])
 
+  const handleGenerate = useCallback(() => doGenerate(false), [doGenerate])
+  const handleOverwrite = useCallback(() => doGenerate(true), [doGenerate])
+  const handleCancelOverwrite = useCallback(() => setExistingFiles(null), [])
+
   const doneCount    = Object.values(statuses).filter(s => s.status === 'success').length
   const errorCount   = Object.values(statuses).filter(s => s.status === 'error').length
   const hasResults   = doneCount + errorCount > 0
@@ -108,6 +128,26 @@ export function AiRulesModal({ onClose }: Props) {
           </div>
           <button className="export-modal-close" onClick={onClose}>×</button>
         </div>
+
+        {/* Overwrite confirmation banner */}
+        {existingFiles && (
+          <div className="ai-rules-overwrite-banner">
+            <div className="ai-rules-overwrite-icon">⚠️</div>
+            <div className="ai-rules-overwrite-body">
+              <strong>The following file{existingFiles.length !== 1 ? 's' : ''} already exist{existingFiles.length === 1 ? 's' : ''}:</strong>
+              <ul className="ai-rules-overwrite-list">
+                {existingFiles.map(f => (
+                  <li key={f.target}><code>{f.path}</code></li>
+                ))}
+              </ul>
+              <span>Do you want to overwrite {existingFiles.length !== 1 ? 'them' : 'it'}?</span>
+            </div>
+            <div className="ai-rules-overwrite-actions">
+              <button className="export-btn export-btn--secondary" onClick={handleCancelOverwrite}>Cancel</button>
+              <button className="export-btn export-btn--danger" onClick={handleOverwrite}>Overwrite</button>
+            </div>
+          </div>
+        )}
 
         {/* Selection controls */}
         <div className="ai-rules-select-bar">

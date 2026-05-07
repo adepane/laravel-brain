@@ -127,7 +127,31 @@ class BrainController extends Controller
             ], 422);
         }
 
+        $force = (bool) $request->input('force', false);
         $exporter = new RulesExporter($storageDir, base_path());
+
+        // Check for existing files before writing (unless force is set)
+        if (! $force) {
+            $existing = [];
+            foreach ($requested as $target) {
+                $destPath = $exporter->targetPath($target);
+                if (file_exists($destPath)) {
+                    $existing[] = [
+                        'target' => $target,
+                        'label'  => RulesExporter::TARGETS[$target]['label'],
+                        'path'   => str_replace(base_path().'/', '', $destPath),
+                    ];
+                }
+            }
+
+            if (! empty($existing)) {
+                return response()->json([
+                    'existing' => $existing,
+                    'message'  => count($existing).' file(s) already exist. Pass force=true to overwrite.',
+                ], 409);
+            }
+        }
+
         $results = [];
 
         foreach ($requested as $target) {

@@ -1550,6 +1550,41 @@ body::before {
 
 .export-btn--primary  { background: #1565c0; color: #fff; border-color: #2196F3; }
 .export-btn--secondary { background: var(--border); color: var(--text); border-color: var(--border); }
+.export-btn--danger   { background: #c62828; color: #fff; border-color: #ef5350; }
+
+/* ── AI Rules overwrite confirmation ───────────────── */
+.ai-rules-overwrite-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 20px;
+  padding: 14px 16px;
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid rgba(255, 152, 0, 0.4);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.ai-rules-overwrite-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+.ai-rules-overwrite-body { flex: 1; font-size: 13px; line-height: 1.5; color: var(--text); }
+.ai-rules-overwrite-body strong { display: block; margin-bottom: 6px; }
+.ai-rules-overwrite-list {
+  margin: 0 0 8px 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+.ai-rules-overwrite-list li { margin-bottom: 2px; }
+.ai-rules-overwrite-list code {
+  font-size: 12px;
+  background: rgba(255,255,255,0.07);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.ai-rules-overwrite-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
 .export-btn--accent   { background: #6a1b9a; color: #fff; border-color: #9C27B0; }
 
 .export-modal-hint {

@@ -14,7 +14,8 @@ class ExportContextCommand extends Command
                             {--node=       : Target a specific node ID}
                             {--budget=6000 : Token budget}
                             {--format=markdown : Output format (markdown|json)}
-                            {--output=     : Write to file path instead of stdout}';
+                            {--output=     : Write to file path instead of stdout}
+                            {--force       : Overwrite existing output file without prompting}';
 
     protected $description = 'Export a deterministic AI context snapshot from the scanned graph';
 
@@ -50,6 +51,14 @@ class ExportContextCommand extends Command
         $outputPath = $this->option('output') ? (string) $this->option('output') : null;
 
         if ($outputPath) {
+            if (file_exists($outputPath) && ! $this->option('force')) {
+                if (! $this->confirm("<fg=yellow>{$outputPath}</> already exists. Overwrite?", false)) {
+                    $this->line('<fg=yellow>Aborted.</> No file written.');
+
+                    return self::SUCCESS;
+                }
+            }
+
             file_put_contents($outputPath, $output);
             $this->info("Context written to {$outputPath}");
         } else {
