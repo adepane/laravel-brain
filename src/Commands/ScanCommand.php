@@ -20,8 +20,6 @@ class ScanCommand extends Command
 
     public function handle(): int
     {
-        ini_set('memory_limit', '1024M');
-
         $projectPath = base_path();
 
         if ($this->option('watch')) {
