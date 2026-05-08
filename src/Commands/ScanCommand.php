@@ -11,7 +11,8 @@ class ScanCommand extends Command
 {
     protected $signature = 'brain:scan
                             {--watch : Watch for PHP file changes and auto-rescan}
-                            {--interval=3 : Poll interval in seconds (watch mode only)}';
+                            {--interval=3 : Poll interval in seconds (watch mode only)}
+                            {--memory=1024M : Increase memory limit for scanning. Example: 1024M}';
 
     protected $description = 'Analyze this Laravel project and open the interactive graph viewer';
 
@@ -20,6 +21,14 @@ class ScanCommand extends Command
 
     public function handle(): int
     {
+        $memory = $this->setMemoryLimit($this->option('memory'));
+
+        if($memory === self::FAILURE) {
+            return $memory;
+        }
+
+        ini_set('memory_limit', $memory);
+
         $projectPath = base_path();
 
         if ($this->option('watch')) {
@@ -112,6 +121,55 @@ class ScanCommand extends Command
         }
 
         return $label;
+    }
+
+    // ── Memory Option ─────────────────────────────────────────────────────────
+
+    private function setMemoryLimit($option): string|int
+    {
+        $memory = trim((string) $option);
+
+        if ($memory === '-1') {
+            return -1;
+        }
+
+        if (preg_match('/^\s*([+-]?\d+)\s*([kmgt]?)\s*$/i', $memory, $matches)) {
+            $value = (int) $matches[1];
+            $unit = strtoupper($matches[2]);
+
+            if ($unit === '') {
+                $unit = 'M';
+            }
+
+            if ($value <= 0) {
+                $this->error('Invalid memory limit. The value must be a positive number or -1.');
+                return self::FAILURE;
+            }
+
+            $bytes = $this->convertToBytes($value, $unit);
+            $minimumBytes = 1024 * 1024 * 1024; // 1024M in bytes
+
+            if ($bytes < $minimumBytes) {
+                $this->error('The memory limit must be at least 1024M (or equivalent).');
+                return self::FAILURE;
+            }
+
+            return $value . $unit;
+        }
+
+        $this->error('Invalid memory limit format. Example: 1024, 1G, 2G or -1.');
+        return self::FAILURE;
+    }
+
+    private function convertToBytes(int $value, string $unit): int
+    {
+        return match ($unit) {
+            'K' => $value * 1024,
+            'M' => $value * 1024 * 1024,
+            'G' => $value * 1024 * 1024 * 1024,
+            'T' => $value * 1024 * 1024 * 1024 * 1024,
+            default => $value,
+        };
     }
 
     // ── Shared scan logic ─────────────────────────────────────────────────────
