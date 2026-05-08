@@ -23,7 +23,7 @@ class ScanCommand extends Command
     {
         $memoryLimit = $this->normalizeMemoryLimit($this->option('memory-limit'));
 
-        if($memoryLimit === self::FAILURE) {
+        if ($memoryLimit === self::FAILURE) {
             return $memoryLimit;
         }
 
@@ -127,38 +127,34 @@ class ScanCommand extends Command
 
     private function normalizeMemoryLimit($option): string|int
     {
-        $memory = trim((string) $option);
+        $memory = strtoupper(trim((string) $option));
 
         if ($memory === '-1') {
             return -1;
         }
 
-        if (preg_match('/^([+-]?\d+)([kmgt]?)$/i', $memory, $matches)) {
-            $value = (int) $matches[1];
-            $unit = strtoupper($matches[2]);
+        if (! preg_match('/^(\d+)([KMGT]?)$/', $memory, $matches)) {
+            $this->error('Invalid memory limit format. Example: 1024M, 1G, 2G or -1.');
 
-            if ($unit === '') {
-                $unit = 'M';
-            }
-
-            if ($value <= 0) {
-                $this->error('Invalid memory limit. The value must be a positive number or -1.');
-                return self::FAILURE;
-            }
-
-            $bytes = $this->convertToBytes($value, $unit);
-            $minimumBytes = 1024 * 1024 * 1024; // 1024M in bytes
-
-            if ($bytes < $minimumBytes) {
-                $this->error('The memory limit must be at least 1024M (or equivalent).');
-                return self::FAILURE;
-            }
-
-            return $value . $unit;
+            return self::FAILURE;
         }
 
-        $this->error('Invalid memory limit format. Example: 1024, 1G, 2G or -1.');
-        return self::FAILURE;
+        $value = (int) $matches[1];
+        $unit = $matches[2] ?: 'M';
+
+        if ($value <= 0) {
+            $this->error('Invalid memory limit. The value must be a positive number or -1.');
+
+            return self::FAILURE;
+        }
+
+        if ($this->convertToBytes($value, $unit) < (1024 ** 3)) {
+            $this->error("The memory limit must be at least 1024M (Current: {$value}{$unit}).");
+
+            return self::FAILURE;
+        }
+
+        return "{$value}{$unit}";
     }
 
     private function convertToBytes(int $value, string $unit): int
