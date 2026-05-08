@@ -12,7 +12,7 @@ class ScanCommand extends Command
     protected $signature = 'brain:scan
                             {--watch : Watch for PHP file changes and auto-rescan}
                             {--interval=3 : Poll interval in seconds (watch mode only)}
-                            {--memory=1024M : Increase memory limit for scanning. Example: 1024M}';
+                            {--memory-limit=1024M : Increase memory limit for scanning. Example: 1024M}';
 
     protected $description = 'Analyze this Laravel project and open the interactive graph viewer';
 
@@ -21,13 +21,13 @@ class ScanCommand extends Command
 
     public function handle(): int
     {
-        $memory = $this->setMemoryLimit($this->option('memory'));
+        $memoryLimit = $this->normalizeMemoryLimit($this->option('memory-limit'));
 
-        if($memory === self::FAILURE) {
-            return $memory;
+        if($memoryLimit === self::FAILURE) {
+            return $memoryLimit;
         }
 
-        ini_set('memory_limit', $memory);
+        ini_set('memory_limit', $memoryLimit);
 
         $projectPath = base_path();
 
@@ -125,7 +125,7 @@ class ScanCommand extends Command
 
     // ── Memory Option ─────────────────────────────────────────────────────────
 
-    private function setMemoryLimit($option): string|int
+    private function normalizeMemoryLimit($option): string|int
     {
         $memory = trim((string) $option);
 
@@ -133,7 +133,7 @@ class ScanCommand extends Command
             return -1;
         }
 
-        if (preg_match('/^\s*([+-]?\d+)\s*([kmgt]?)\s*$/i', $memory, $matches)) {
+        if (preg_match('/^([+-]?\d+)([kmgt]?)$/i', $memory, $matches)) {
             $value = (int) $matches[1];
             $unit = strtoupper($matches[2]);
 
@@ -164,10 +164,10 @@ class ScanCommand extends Command
     private function convertToBytes(int $value, string $unit): int
     {
         return match ($unit) {
-            'K' => $value * 1024,
-            'M' => $value * 1024 * 1024,
-            'G' => $value * 1024 * 1024 * 1024,
-            'T' => $value * 1024 * 1024 * 1024 * 1024,
+            'K' => $value * (1024 ** 1),
+            'M' => $value * (1024 ** 2),
+            'G' => $value * (1024 ** 3),
+            'T' => $value * (1024 ** 4),
             default => $value,
         };
     }
